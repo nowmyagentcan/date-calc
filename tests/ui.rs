@@ -28,4 +28,5 @@ fn page_reaches_no_other_host() {
 fn page_has_the_title_and_one_button() {
     assert!(PAGE.contains("<title>Date calculator</title>"));
     assert!(PAGE.contains("<button class=\"go\">Calculate</button>"));
+    assert!(PAGE.contains("fetch(\"/api\""));
 }
