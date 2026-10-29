@@ -2,6 +2,8 @@
 
 Count business days and hours with official public holidays for 250 countries, add working days, list holidays, and convert dates between six calendars. Offline, in one small binary.
 
+![The date-calc page counting 16 business days in China in February 2026](.github/screenshot.png)
+
 ## Install
 
 Windows (PowerShell, no admin; installs to `%LOCALAPPDATA%\Programs\date-calc` and adds it to your user PATH):
@@ -71,7 +73,7 @@ icu_calendar 2.4.0 · nepali-datetime 1.0.8.5 (2026-05-07)
 - The first line of `between`, `add` and `hours` is the answer, so `$(date-calc add 2026-11-02 10 -c US | head -1)` works.
 - Exit codes: 0 ok (warnings included), 1 invalid input or a date outside the data, 2 usage, 3 runtime.
 
-Run `date-calc` alone for interactive mode: type `2026-11-02 +10`, `2027` or `1 Ramadan 1448`, and set the session with `/country DE`, `/region BY`, `/tz`, `/hours`; `/quit` leaves.
+Run `date-calc` alone for interactive mode: type `2026-11-02 +10`, `2026-11-02 11:00 +1.5 hours`, `2027` or `1 Ramadan 1448`, and set the session with `/country DE`, `/region BY`, `/tz`, `/hours`; `/quit` leaves.
 
 **The page:** `date-calc ui` opens a small page in your browser, served on `127.0.0.1` only. Type a query in the same form, pick a country and region, and press Enter. Copy and Save give the answer as text.
 
