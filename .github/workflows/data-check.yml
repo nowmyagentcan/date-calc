@@ -1,0 +1,42 @@
+# Monthly: compares the bundled holiday data, tzdata and Bikram Sambat table with upstream and
+# opens one issue per stale source. Updating stays a reviewed commit and a patch release.
+name: data-check
+on:
+  schedule:
+    - cron: '0 6 1 * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compare with upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stale() {
+            if gh issue list --state open --limit 500 --json title --jq '.[].title' | grep -qxF "$1"; then
+              echo "open already: $1"
+            else
+              gh issue create --title "$1" --body "$2"
+            fi
+          }
+          have=$(sed -n 's/^holidays==\([^ ]*\).*/\1/p' scripts/requirements.txt)
+          latest=$(curl -fsS https://pypi.org/pypi/holidays/json | python3 -c 'import json, sys; print(json.load(sys.stdin)["info"]["version"])')
+          echo "python-holidays: bundled $have, latest $latest"
+          [ "$have" = "$latest" ] || stale "Data update: python-holidays $latest" \
+            "Bundled: $have. Bump scripts/requirements.txt, run \`python scripts/export_holidays.py\` with Python 3.12, check the tests and goldens, commit, and release a patch version."
+          have=$(sed -n 's/.*Some(r"\(.*\)").*/\1/p' vendor/jiff-tzdb/tzname.rs)
+          latest=$(curl -fsS https://data.iana.org/time-zones/tzdb/version)
+          echo "tzdata: bundled $have, latest $latest"
+          [ "$have" = "$latest" ] || stale "Data update: tzdata $latest" \
+            "Bundled: $have. Run \`bash scripts/vendor-tzdb.sh $latest\`, update the $have expectations in the tests, commit, and release a patch version."
+          curl -fsSL -o upstream.csv https://raw.githubusercontent.com/amitgaru2/nepali-datetime/master/nepali_datetime/data/calendar_bs.csv
+          have=$(sha256sum < data/calendar_bs.csv)
+          latest=$(sha256sum < upstream.csv)
+          echo "calendar_bs.csv: bundled ${have%% *}, upstream ${latest%% *}"
+          [ "$have" = "$latest" ] || stale "Data update: nepali-datetime calendar_bs.csv" \
+            "The Bikram Sambat table on nepali-datetime's master branch differs from data/calendar_bs.csv. Review the change, copy the file unmodified, update the version in the code and the notice, commit, and release a patch version."
