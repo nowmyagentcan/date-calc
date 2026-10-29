@@ -212,14 +212,10 @@ struct Request {
     weekend: Option<String>,
     hours: Option<String>,
     timezone: Option<String>,
-    #[serde(default = "yes")]
+    #[serde(default = "report::yes")]
     include_start: bool,
-    #[serde(default = "yes")]
+    #[serde(default = "report::yes")]
     include_end: bool,
-}
-
-fn yes() -> bool {
-    true
 }
 
 /// `{"op", "result", "text"}` for a query (`text` is the CLI's text without colour), or

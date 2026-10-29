@@ -51,10 +51,6 @@ fn default_hours() -> String {
     DEFAULT_HOURS.into()
 }
 
-fn yes() -> bool {
-    true
-}
-
 #[derive(Deserialize, JsonSchema)]
 struct BetweenArgs {
     /// First date: YYYY-MM-DD or today
@@ -64,10 +60,10 @@ struct BetweenArgs {
     #[serde(flatten)]
     place: Place,
     /// Count the start date
-    #[serde(default = "yes")]
+    #[serde(default = "report::yes")]
     include_start: bool,
     /// Count the end date
-    #[serde(default = "yes")]
+    #[serde(default = "report::yes")]
     include_end: bool,
 }
 

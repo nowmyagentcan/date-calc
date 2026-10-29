@@ -665,6 +665,11 @@ fn hours(start: &str, end: &str, o: &Options) -> Result<Hours, Error> {
     })
 }
 
+/// The default of a JSON flag that is on unless sent as false.
+pub fn yes() -> bool {
+    true
+}
+
 /// `{"error": {"code", "message", "hint"}}`, the JSON for every failure.
 pub fn failure(error: &Error) -> String {
     #[derive(Serialize)]
