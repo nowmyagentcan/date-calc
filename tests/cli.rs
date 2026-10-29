@@ -1456,7 +1456,10 @@ fn counts_only_the_arguments_against_the_length_limit() {
     let dir = base.join("p".repeat(pad.max(1)));
     std::fs::create_dir_all(&dir).unwrap();
     let exe = dir.join(name);
-    std::fs::copy(env!("CARGO_BIN_EXE_date-calc"), &exe).unwrap();
+    // A link, not a copy: a sibling test's child can inherit the copy's write handle, and
+    // Linux then refuses to run the file (ETXTBSY). A failed removal shows up in hard_link.
+    let _ = std::fs::remove_file(&exe);
+    std::fs::hard_link(env!("CARGO_BIN_EXE_date-calc"), &exe).unwrap();
     assert!(exe.as_os_str().len() > 256);
     let out = Command::new(&exe).arg("--version").output().unwrap();
     assert_eq!(
