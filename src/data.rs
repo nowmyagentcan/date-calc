@@ -262,13 +262,24 @@ impl Block {
         days
     }
 
-    /// Whether a weekend day is worked by decree on this date.
-    pub fn worked_by_decree(&self, region: Option<usize>, date: Date) -> bool {
-        let i = self.workdays.partition_point(|w| w.1 < date);
+    /// Weekend days worked by decree from `from` to `to`, both included, in date order.
+    pub fn decree_workdays(
+        &self,
+        region: Option<usize>,
+        from: Date,
+        to: Date,
+    ) -> impl Iterator<Item = Date> {
+        let i = self.workdays.partition_point(|w| w.1 < from);
         self.workdays[i..]
             .iter()
-            .take_while(|w| w.1 == date)
-            .any(|w| w.0.is_none() || w.0 == region)
+            .take_while(move |w| w.1 <= to)
+            .filter(move |w| w.0.is_none() || w.0 == region)
+            .map(|w| w.1)
+    }
+
+    /// Whether a weekend day is worked by decree on this date.
+    pub fn worked_by_decree(&self, region: Option<usize>, date: Date) -> bool {
+        self.decree_workdays(region, date, date).next().is_some()
     }
 
     /// Fails with `no_holiday_data` when the date is outside the country's data years.
