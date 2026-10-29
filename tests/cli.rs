@@ -1241,7 +1241,6 @@ fn reads_chinese_month_names() {
 }
 
 #[test]
-#[ignore = "known bug: F03"]
 fn reads_instants_with_fractional_seconds() {
     let span = ["2026-11-02T09:00:00.000Z", "2026-11-02T10:00:00.000Z"];
     let v = answer(&["hours", span[0], span[1], "--tz", "UTC"]);

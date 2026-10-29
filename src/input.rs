@@ -39,8 +39,21 @@ pub fn date(text: &str) -> Result<Date, Error> {
     Date::new(y.parse().unwrap(), m.parse().unwrap(), d.parse().unwrap()).map_err(|_| bad())
 }
 
-/// `HH:MM`, or `HH:MM:SS` when `seconds` allows it, as seconds from midnight.
+/// `HH:MM`, or `HH:MM:SS` with any fraction (dropped) when `seconds` allows it, as seconds from
+/// midnight.
 fn clock(text: &str, seconds: bool) -> Option<i32> {
+    let text = match text.split_once('.') {
+        Some((whole, fraction))
+            if seconds
+                && whole.len() == 8
+                && !fraction.is_empty()
+                && fraction.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            whole
+        }
+        Some(_) => return None,
+        None => text,
+    };
     let parts: Vec<_> = text.split(':').collect();
     let two_digits = |p: &&str| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit());
     if !(parts.len() == 2 || seconds && parts.len() == 3) || !parts.iter().all(two_digits) {
@@ -339,6 +352,7 @@ mod tests {
         assert_eq!(civil("2026-11-02T09:30"), at(9, 30, 0));
         assert_eq!(civil("2026-11-02 09:30:15"), at(9, 30, 15));
         assert_eq!(civil("2026-11-02t23:59:59"), at(23, 59, 59));
+        assert_eq!(civil("2026-11-02T09:30:15.999"), at(9, 30, 15));
         assert_eq!(civil("2026-11-02"), at(0, 0, 0));
         assert_eq!(civil("9999-12-31T23:59").date(), ymd(9999, 12, 31));
         assert_eq!(civil("NOW").subsec_nanosecond(), 0);
@@ -348,6 +362,9 @@ mod tests {
             "2026-11-02T24:00",
             "2026-11-02T09:60",
             "2026-11-02T09:30:5",
+            "2026-11-02T09:30.5",
+            "2026-11-02T09:30:00.",
+            "2026-11-02T09:30:00.5x",
             "2026-11-02X09:30",
             "2026-11-31T09:30",
             "x",
