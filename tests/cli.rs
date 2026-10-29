@@ -1308,11 +1308,14 @@ fn overnight_hours_at_the_end_of_the_data_agree_with_add() {
 }
 
 #[test]
-#[ignore = "known bug: F10"]
 fn keeps_zoned_times_inside_year_one() {
-    let args = "hours 0001-01-01T00:00Z 0001-01-01T01:00Z --tz America/New_York --weekend none --hours 00:00-24:00 --json";
-    let (code, out, _) = run(&args.split(' ').collect::<Vec<_>>());
-    assert!(!out.contains("\"0000-"), "{code}: {out}");
+    let args = "hours 0001-01-01T00:00Z 0001-01-01T01:00Z --tz America/New_York --weekend none --hours 00:00-24:00";
+    let (code, v) = json(&args.split(' ').collect::<Vec<_>>());
+    assert_eq!(
+        (code, &v["error"]["code"]),
+        (1, &json!("date_out_of_range")),
+        "{v}"
+    );
 }
 
 #[test]
