@@ -2,11 +2,12 @@
 
 use std::sync::Arc;
 
-use rmcp::handler::server::tool::{schema_for_input, schema_for_output};
+use rmcp::handler::server::tool::schema_for_input;
 use rmcp::model::{CallToolResult, ContentBlock, JsonObject};
 use rmcp::service::ServerInitializeError;
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
+use schemars::generate::SchemaSettings;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Number, Value};
@@ -172,7 +173,7 @@ impl Server {
     #[tool(
         description = concat!("Count business days between two dates in a country and region, skipping weekends and official public holidays and counting weekend days made workdays by decree. Both dates count by default, like Excel NETWORKDAYS; pass the same date twice to ask whether one day is a business day. Returns the signed count, the holidays and worked weekend days in range, elapsed calendar days and the data version.", on_error!()),
         input_schema = input::<BetweenArgs>(),
-        output_schema = schema_for_output::<Between>(),
+        output_schema = output::<Between>(),
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn business_days_between(&self, args: JsonObject) -> CallToolResult {
@@ -189,7 +190,7 @@ impl Server {
     #[tool(
         description = concat!("Add or subtract business days (default, like Excel WORKDAY: the start is not counted), calendar days, weeks, months, years or business hours, using a country's weekends and public holidays. Returns the result and the non-business days skipped.", on_error!()),
         input_schema = input::<AddArgs>(),
-        output_schema = schema_for_output::<Added>(),
+        output_schema = output::<Added>(),
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn add_to_date(&self, args: JsonObject) -> CallToolResult {
@@ -208,7 +209,7 @@ impl Server {
     #[tool(
         description = concat!("Count working time between two date-times on a country's business days within working hours (default 09:00-17:00, several windows allowed), in a time zone when given. Returns seconds, hours and the holidays in range.", on_error!()),
         input_schema = input::<HoursArgs>(),
-        output_schema = schema_for_output::<Hours>(),
+        output_schema = output::<Hours>(),
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn business_hours_between(&self, args: JsonObject) -> CallToolResult {
@@ -225,7 +226,7 @@ impl Server {
     #[tool(
         description = concat!("List official public holidays for a country, or one region, for a year or a date range, with holidays only some regions keep and weekend days worked by decree. Flags observed (substitute) and estimated dates.", on_error!()),
         input_schema = input::<HolidaysArgs>(),
-        output_schema = schema_for_output::<Holidays>(),
+        output_schema = output::<Holidays>(),
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn list_holidays(&self, args: JsonObject) -> CallToolResult {
@@ -242,7 +243,7 @@ impl Server {
     #[tool(
         description = concat!("Convert a date between Gregorian, Islamic Umm al-Qura, tabular Islamic, Hebrew, Chinese lunar, Persian solar and Nepali Bikram Sambat calendars. Returns the date in every calendar (or one), with month names and notes on observation-based dates.", on_error!()),
         input_schema = input::<ConvertArgs>(),
-        output_schema = schema_for_output::<Converted>(),
+        output_schema = output::<Converted>(),
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     fn convert_date(&self, args: JsonObject) -> CallToolResult {
@@ -277,9 +278,18 @@ fn input<T: JsonSchema + 'static>() -> Arc<JsonObject> {
     schema_for_input::<T>().expect("tool arguments are objects")
 }
 
-/// An output schema with an object at its root, as 2025-11-25 clients require.
-fn output<T: JsonSchema + 'static>() -> Arc<JsonObject> {
-    let mut schema = (*schema_for_output::<T>()).clone();
+/// The schema of an answer as serialized, so fields left out when empty aren't required, with
+/// an object at its root, as 2025-11-25 clients require.
+fn output<T: JsonSchema>() -> Arc<JsonObject> {
+    let schema = SchemaSettings::draft2020_12()
+        .for_serialize()
+        .into_generator()
+        .into_root_schema_for::<T>();
+    let Value::Object(mut schema) = schema.to_value() else {
+        unreachable!("a root schema is an object")
+    };
+    schema.remove("title");
+    schema.remove("description");
     schema.insert("type".into(), "object".into());
     Arc::new(schema)
 }

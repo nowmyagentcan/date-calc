@@ -550,7 +550,6 @@ fn misfit(value: &Value, schema: &Value, root: &Value, path: &str) -> Option<Str
 }
 
 #[test]
-#[ignore = "known bug: F02"]
 fn answers_fit_their_output_schemas() {
     let calls = [
         (
