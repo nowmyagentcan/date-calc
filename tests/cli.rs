@@ -446,9 +446,13 @@ fn converts_dates_as_documented() {
     });
     assert_eq!(v, want);
     for (args, gregorian, warnings) in [
-        ("1 Muharram 1448", "2026-06-16", ""),
-        ("1448-01-01 --from islamic-umalqura", "2026-06-16", ""),
-        ("1 Ramadan 1447", "2026-02-18", ""),
+        ("1 Muharram 1448", "2026-06-16", "calendar_note"),
+        (
+            "1448-01-01 --from islamic-umalqura",
+            "2026-06-16",
+            "calendar_note",
+        ),
+        ("1 Ramadan 1447", "2026-02-18", "calendar_note"),
         ("1 Tishrei 5787", "2026-09-12", ""),
         ("5787-05L-01 --from hebrew", "2027-02-08", ""),
         ("1 Adar I 5787", "2027-02-08", ""),

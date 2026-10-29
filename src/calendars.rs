@@ -395,10 +395,18 @@ pub fn convert(
     only: Option<Calendar>,
 ) -> Result<Converted, Error> {
     let (from, gregorian) = read(input, from)?;
-    let mut warnings: Vec<_> = Some(from)
-        .filter(|&c| c != Gregorian)
-        .and_then(|c| caution(&in_calendar(c, gregorian).ok()?))
-        .into_iter()
+    // The input's own calendar isn't shown, so its caution and note become warnings.
+    let source = Some(from).filter(|&c| c != Gregorian);
+    let source = source.and_then(|c| in_calendar(c, gregorian).ok());
+    let mut warnings: Vec<_> = source
+        .iter()
+        .flat_map(|d| {
+            let note = d.note.map(|n| Warning {
+                code: "calendar_note",
+                message: n.into(),
+            });
+            caution(d).into_iter().chain(note)
+        })
         .collect();
     let wanted = Calendar::ALL
         .into_iter()
@@ -690,6 +698,14 @@ mod tests {
         );
         assert!(r.dates[2..].iter().all(|d| d.note.is_none()));
         assert!(r.warnings.is_empty());
+        let ramadan = convert("1 Ramadan 1448", None, Some(Gregorian)).unwrap();
+        assert_eq!(
+            ramadan.warnings,
+            [Warning {
+                code: "calendar_note",
+                message: r.dates[0].note.unwrap().into(),
+            }]
+        );
         let only = convert("2026-10-27", None, Some(Persian)).unwrap();
         assert_eq!(
             only.dates,
