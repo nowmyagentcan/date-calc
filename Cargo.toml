@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
 jiff-tzdb = "0.1.9"
+icu_calendar = { version = "2.4.0", default-features = false }
 
 [profile.release]
 opt-level = "z"
