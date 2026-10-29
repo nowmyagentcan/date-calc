@@ -7,7 +7,7 @@ use crate::error::Error;
 
 static DATA: &str = include_str!("../data/holidays.txt");
 
-/// The country line: `C code name aliases first last decree_through`.
+/// The country line (`C code name aliases first last decree_through`) and the block's first lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Country {
     pub code: &'static str,
@@ -16,6 +16,9 @@ pub struct Country {
     pub years: (i16, i16),
     /// The last year with one-off holidays or workday swaps, for countries that announce them most years.
     pub decree_through: Option<i16>,
+    pub region_count: usize,
+    /// The national weekend at the start of the data years.
+    pub weekend: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +73,50 @@ fn blocks() -> impl Iterator<Item = &'static str> {
     DATA[DATA.find("\nC\t").expect("country lines") + 3..].split("\nC\t")
 }
 
+/// Every country, in code order, without parsing their holidays.
+pub fn countries() -> impl Iterator<Item = Country> {
+    blocks().map(Country::parse)
+}
+
+/// Finds a country by alpha-2, alpha-3, alias or English name (case, spaces and punctuation
+/// ignored) and the region in it. `CC-REGION` names the region when the whole text isn't a
+/// country (`Guinea-Bissau` is one); an explicit `region` wins over it.
+pub fn find(country: &str, region: Option<&str>) -> Result<(Block, Option<usize>), Error> {
+    let (text, region) = match find_block(country) {
+        Some(text) => (text, region),
+        None => country
+            .split_once('-')
+            .and_then(|(c, r)| Some((find_block(c)?, region.or(Some(r)))))
+            .ok_or_else(|| {
+                Error::new("unknown_country", format!("Unknown country: '{country}'."))
+                    .hint("Use an ISO code such as DE or DEU, or run: date-calc countries")
+            })?,
+    };
+    let block = Block::parse(text);
+    let region = region.map(|r| block.region(r)).transpose()?;
+    Ok((block, region))
+}
+
+fn squash(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn find_block(country: &str) -> Option<&'static str> {
+    let key = squash(country);
+    blocks().find(|&b| {
+        let c = Country::parse(b);
+        let mut names = [c.code, c.name].into_iter().chain(c.aliases);
+        !key.is_empty() && names.any(|n| squash(n) == key)
+    })
+}
+
+fn weekend_days(mask: &str) -> u8 {
+    mask.bytes().rev().fold(0, |m, b| m << 1 | (b - b'0'))
+}
+
 fn index(regions: &[Region], code: &str) -> Option<usize> {
     regions.iter().position(|r| r.code == code)
 }
@@ -80,31 +127,28 @@ fn ymd(s: &str) -> Date {
 }
 
 impl Country {
-    fn parse(line: &'static str) -> Self {
-        let f: Vec<_> = line.split('\t').collect();
+    /// Reads the country line, the region lines after it and the first weekend line.
+    fn parse(block: &'static str) -> Self {
+        let mut lines = block.lines();
+        let f: Vec<_> = lines.next().unwrap().split('\t').collect();
+        let region_count = lines.by_ref().take_while(|l| l.starts_with("R\t")).count();
+        let first_weekend = block.lines().nth(region_count + 1).unwrap();
         Self {
             code: f[0],
             name: f[1],
             aliases: f[2].split(',').filter(|a| !a.is_empty()).collect(),
             years: (f[3].parse().unwrap(), f[4].parse().unwrap()),
             decree_through: f[5].parse().ok(),
+            region_count,
+            weekend: weekend_days(first_weekend.split('\t').nth(3).unwrap()),
         }
     }
 }
 
 impl Block {
-    /// The block for an ISO 3166-1 alpha-2 code exactly as the data writes it.
-    pub fn get(code: &str) -> Option<Self> {
-        blocks()
-            .find(|b| b.split('\t').next() == Some(code))
-            .map(Self::parse)
-    }
-
     fn parse(text: &'static str) -> Self {
-        let mut lines = text.lines();
-        let country = Country::parse(lines.next().unwrap());
         let mut block = Self {
-            country,
+            country: Country::parse(text),
             regions: vec![],
             holidays: vec![],
             weekends: vec![],
@@ -112,7 +156,7 @@ impl Block {
         };
         let mut names = vec![];
         let mut except = vec![];
-        for line in lines {
+        for line in text.lines().skip(1) {
             let f: Vec<_> = line.split('\t').collect();
             let region = |code| index(&block.regions, code);
             match f[0] {
@@ -123,7 +167,7 @@ impl Block {
                 "W" => block.weekends.push(Weekend {
                     region: region(f[1]),
                     from: f[2].parse().expect("date in holiday data"),
-                    days: f[3].bytes().rev().fold(0, |m, b| m << 1 | (b - b'0')),
+                    days: weekend_days(f[3]),
                 }),
                 "N" => names.push(f[2]),
                 "H" => {
@@ -158,6 +202,31 @@ impl Block {
                 .push(region);
         }
         block
+    }
+
+    /// A region by code or name, case-insensitive.
+    pub fn region(&self, text: &str) -> Result<usize, Error> {
+        let key = text.to_lowercase();
+        let found = self.regions.iter().position(|r| {
+            let mut names = std::iter::once(r.code).chain(r.names.iter().copied());
+            names.any(|n| n.to_lowercase() == key)
+        });
+        let Country { code, name, .. } = self.country;
+        found.ok_or_else(|| {
+            let codes: Vec<_> = self.regions.iter().map(|r| r.code).collect();
+            let hint = match codes.len() {
+                0 => format!("{name} has no regions in the holiday data."),
+                1..=12 => format!(
+                    "Regions: {}. Run: date-calc countries {code}",
+                    codes.join(", ")
+                ),
+                _ => format!(
+                    "Regions: {}, … Run: date-calc countries {code}",
+                    codes[..12].join(", ")
+                ),
+            };
+            Error::new("unknown_region", format!("{name} has no region '{text}'.")).hint(hint)
+        })
     }
 
     /// Whether the region (or the whole country) keeps this holiday.
@@ -232,7 +301,89 @@ mod tests {
     }
 
     fn region(b: &Block, code: &str) -> Option<usize> {
-        b.regions.iter().position(|r| r.code == code)
+        index(&b.regions, code)
+    }
+
+    fn get(country: &str) -> Block {
+        find(country, None).unwrap().0
+    }
+
+    fn found(country: &str, region: Option<&str>) -> (&'static str, Option<&'static str>) {
+        let (b, r) = find(country, region).unwrap();
+        (b.country.code, r.map(|r| b.regions[r].code))
+    }
+
+    #[test]
+    fn finds_countries_by_code_alias_or_name() {
+        for text in ["DE", "de", "DEU", "Germany", " germany "] {
+            assert_eq!(found(text, None), ("DE", None), "{text}");
+        }
+        assert_eq!(found("UK", None).0, "GB");
+        assert_eq!(found("united kingdom", None).0, "GB");
+        assert_eq!(found("Korea", None).0, "KR");
+        assert_eq!(found("Guinea-Bissau", None).0, "GW");
+        assert_eq!(found("bosnia and herzegovina", None).0, "BA");
+    }
+
+    #[test]
+    fn finds_regions_by_code_or_alias() {
+        assert_eq!(found("DE-BY", None), ("DE", Some("BY")));
+        assert_eq!(found("de-bayern", None), ("DE", Some("BY")));
+        assert_eq!(found("DE", Some("BADEN-WÜRTTEMBERG")), ("DE", Some("BW")));
+        assert_eq!(found("DE", Some("baden-württemberg")), ("DE", Some("BW")));
+        assert_eq!(found("DE", Some("augsburg")), ("DE", Some("Augsburg")));
+        assert_eq!(found("DE-BY", Some("BW")), ("DE", Some("BW")));
+        assert_eq!(found("GB-ENG", None), ("GB", Some("ENG")));
+    }
+
+    #[test]
+    fn unknown_country_and_region_errors() {
+        for text in ["Atlantis", "XX-BY", ""] {
+            let e = find(text, None).unwrap_err();
+            assert_eq!(e.code, "unknown_country");
+            assert_eq!(e.message, format!("Unknown country: '{text}'."));
+            assert_eq!(
+                e.hint.as_deref(),
+                Some("Use an ISO code such as DE or DEU, or run: date-calc countries")
+            );
+        }
+        let e = find("DE-ZZ", None).unwrap_err();
+        assert_eq!(e.code, "unknown_region");
+        assert_eq!(e.message, "Germany has no region 'ZZ'.");
+        assert_eq!(
+            e.hint.as_deref(),
+            Some(
+                "Regions: BB, BE, BW, BY, HB, HE, HH, MV, NI, NW, RP, SH, … Run: date-calc countries DE"
+            )
+        );
+        let e = find("GB", Some("Kent")).unwrap_err();
+        assert_eq!(
+            e.hint.as_deref(),
+            Some("Regions: ENG, NIR, SCT, WLS. Run: date-calc countries GB")
+        );
+        let e = find("CN", Some("BJ")).unwrap_err();
+        assert_eq!(e.message, "China has no region 'BJ'.");
+        assert_eq!(
+            e.hint.as_deref(),
+            Some("China has no regions in the holiday data.")
+        );
+    }
+
+    #[test]
+    fn lists_countries_without_parsing_holidays() {
+        let all: Vec<_> = countries().collect();
+        assert_eq!(all.len(), 250);
+        let de = all.iter().find(|c| c.code == "DE").unwrap();
+        assert_eq!(
+            (de.region_count, de.weekend, de.years),
+            (17, SAT_SUN, (2000, 2050))
+        );
+        let ae = all.iter().find(|c| c.code == "AE").unwrap();
+        assert_eq!((ae.region_count, ae.weekend), (0, FRI_SAT));
+        assert_eq!(ae.aliases, ["ARE"]);
+        let gb = all.iter().find(|c| c.code == "GB").unwrap();
+        assert_eq!(gb.aliases, ["GBR", "UK"]);
+        assert_eq!(gb.decree_through, Some(2026));
     }
 
     #[test]
@@ -260,7 +411,7 @@ mod tests {
 
     #[test]
     fn china_2026_holidays_and_decree_workdays() {
-        let cn = Block::get("CN").unwrap();
+        let cn = get("CN");
         assert_eq!(cn.country.name, "China");
         assert_eq!(cn.country.aliases, ["CHN"]);
         assert_eq!(cn.country.decree_through, Some(2026));
@@ -305,7 +456,7 @@ mod tests {
 
     #[test]
     fn flags_observed_and_estimated_dates() {
-        let us = Block::get("US").unwrap();
+        let us = get("US");
         let july: Vec<_> = us
             .holidays(None, date(2026, 7, 3), date(2026, 7, 4))
             .collect();
@@ -315,12 +466,12 @@ mod tests {
             ("Independence Day", false)
         );
 
-        let ae = Block::get("AE").unwrap();
+        let ae = get("AE");
         assert!(
             ae.holidays(None, date(2026, 1, 1), date(2026, 12, 31))
                 .any(|h| h.estimated)
         );
-        let sa = Block::get("SA").unwrap();
+        let sa = get("SA");
         assert!(
             !sa.holidays(None, date(2026, 1, 1), date(2026, 12, 31))
                 .any(|h| h.estimated)
@@ -329,7 +480,7 @@ mod tests {
 
     #[test]
     fn regions_add_and_drop_national_holidays() {
-        let de = Block::get("DE").unwrap();
+        let de = get("DE");
         let by = region(&de, "BY");
         assert_eq!(de.regions[by.unwrap()].names, ["Bayern"]);
         let year = (date(2026, 1, 1), date(2026, 12, 31));
@@ -342,7 +493,7 @@ mod tests {
         assert!(names(&de, None, date(2026, 1, 6), date(2026, 1, 6)).is_empty());
 
         // A national holiday a territory doesn't keep (an X line).
-        let us = Block::get("US").unwrap();
+        let us = get("US");
         let national = names(&us, None, date(2026, 7, 4), date(2026, 7, 4));
         let dropped = us.holidays.iter().find(|h| !h.except.is_empty()).unwrap();
         assert!(!us.keeps(dropped, Some(dropped.except[0])));
@@ -352,11 +503,11 @@ mod tests {
 
     #[test]
     fn weekends_change_by_date_and_region() {
-        let ae = Block::get("AE").unwrap();
+        let ae = get("AE");
         assert_eq!(ae.weekend(None, date(2021, 12, 31)), FRI_SAT);
         assert_eq!(ae.weekend(None, date(2022, 1, 1)), SAT_SUN);
 
-        let my = Block::get("MY").unwrap();
+        let my = get("MY");
         let johor = region(&my, "01");
         assert_eq!(my.weekend(None, date(2020, 6, 1)), SAT_SUN);
         assert_eq!(my.weekend(johor, date(2013, 12, 31)), SAT_SUN);
@@ -367,7 +518,7 @@ mod tests {
 
     #[test]
     fn coverage_years_and_decree_schedules() {
-        let lk = Block::get("LK").unwrap();
+        let lk = get("LK");
         assert_eq!(lk.country.years, (2003, 2026));
         assert_eq!(lk.covers(date(2026, 12, 31)), Ok(()));
         let e = lk.covers(date(2027, 1, 4)).unwrap_err();
@@ -380,8 +531,8 @@ mod tests {
             e.hint.as_deref(),
             Some("Pick dates inside that range, or leave out --country to skip only weekends.")
         );
-        assert_eq!(Block::get("IN").unwrap().country.years, (2001, 2035));
-        assert_eq!(Block::get("RU").unwrap().country.decree_through, Some(2027));
-        assert_eq!(Block::get("DE").unwrap().country.decree_through, None);
+        assert_eq!(get("IN").country.years, (2001, 2035));
+        assert_eq!(get("RU").country.decree_through, Some(2027));
+        assert_eq!(get("DE").country.decree_through, None);
     }
 }
