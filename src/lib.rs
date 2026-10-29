@@ -9,3 +9,4 @@ pub mod mcp;
 pub mod query;
 pub mod report;
 pub mod text;
+pub mod ui;

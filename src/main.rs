@@ -8,7 +8,7 @@ use date_calc::days::Roll;
 use date_calc::error::Error;
 use date_calc::input::Unit;
 use date_calc::report::{self, Op, Options};
-use date_calc::{interactive, mcp, text};
+use date_calc::{interactive, mcp, text, ui};
 
 static VERSION: LazyLock<String> = LazyLock::new(|| {
     let (version, released) = date_calc::data::source();
@@ -141,6 +141,19 @@ enum Command {
         country: Option<String>,
         #[command(flatten)]
         out: Out,
+    },
+    /// Open the local web page
+    #[command(after_help = EXAMPLES)]
+    Ui {
+        /// Port on 127.0.0.1 [default: a free one]
+        #[arg(long, value_name = "N", default_value = "0", hide_default_value = true)]
+        port: u16,
+        /// Print the address without opening the browser
+        #[arg(long)]
+        no_open: bool,
+        /// Show the cause of an error
+        #[arg(long)]
+        debug: bool,
     },
     /// Run the MCP server on stdio
     #[command(after_help = EXAMPLES)]
@@ -292,7 +305,7 @@ impl Command {
                 o.country = country;
                 Op::Countries
             }
-            Command::Mcp { .. } => unreachable!("servers run on their own"),
+            Command::Ui { .. } | Command::Mcp { .. } => unreachable!("servers run on their own"),
         };
         (op, o)
     }
@@ -341,6 +354,11 @@ fn main() -> ExitCode {
     let (json, debug) = (flag("--json"), flag("--debug"));
     let answer = match parse(&args) {
         Ok(Command::Mcp { debug }) => return served(mcp::serve(), debug),
+        Ok(Command::Ui {
+            port,
+            no_open,
+            debug,
+        }) => return served(ui::serve(port, !no_open), debug),
         Ok(command) => {
             let (op, o) = command.into_op();
             report::run(&op, &o)
