@@ -51,8 +51,7 @@ fn clock(text: &str, seconds: bool) -> Option<i32> {
         {
             whole
         }
-        Some(_) => return None,
-        None => text,
+        _ => text,
     };
     let parts: Vec<_> = text.split(':').collect();
     let two_digits = |p: &&str| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit());
