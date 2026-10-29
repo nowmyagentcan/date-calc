@@ -44,7 +44,15 @@ pub enum Moment {
 }
 
 impl Moment {
-    /// The date on the clock.
+    /// The clock as printed: in a zone, the instant at its offset rounded to whole minutes.
+    pub fn shown(&self) -> DateTime {
+        match self {
+            Moment::Civil(dt) => *dt,
+            Moment::Zoned(z) => minute_offset(z).to_datetime(z.timestamp()),
+        }
+    }
+
+    /// The date on the zone's clock.
     pub fn date(&self) -> Date {
         match self {
             Moment::Civil(dt) => dt.date(),
@@ -79,8 +87,12 @@ impl Moment {
                     .to_zoned(z.time_zone().clone()),
             ),
         };
-        (moment.date().year() >= 1).then_some(moment)
+        (moment.shown().year() >= 1).then_some(moment)
     }
+}
+
+fn minute_offset(z: &Zoned) -> jiff::tz::Offset {
+    z.offset().round(Unit::Minute).expect("tzdata offsets fit")
 }
 
 /// Clock time as `2026-11-02T10:00:00`; an instant as RFC 3339 to the second. An offset with
@@ -91,9 +103,10 @@ impl fmt::Display for Moment {
         match self {
             Moment::Civil(dt) => write!(f, "{dt}"),
             Moment::Zoned(z) => {
-                let offset = z.offset().round(Unit::Minute).expect("tzdata offsets fit");
                 let printer = DateTimePrinter::new().precision(Some(0));
-                f.write_str(&printer.timestamp_with_offset_to_string(&z.timestamp(), offset))
+                f.write_str(
+                    &printer.timestamp_with_offset_to_string(&z.timestamp(), minute_offset(z)),
+                )
             }
         }
     }

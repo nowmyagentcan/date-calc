@@ -1317,19 +1317,35 @@ fn keeps_zoned_times_inside_year_one() {
 }
 
 #[test]
-#[ignore = "known bug: R2-01"]
 fn historical_offsets_keep_dates_and_weekdays_in_step() {
-    for start in ["1900-01-01T00:00", "0001-01-01T00:00"] {
-        let (code, v) = json(&["add", start, "0", "-u", "bh", "--tz", "Asia/Kolkata"]);
-        if code != 0 {
-            assert_eq!(v["error"]["code"], "date_out_of_range", "{start}: {v}");
-            continue;
-        }
-        let result = v["result"].as_str().unwrap();
-        let day: jiff::civil::Date = result[..10].parse().expect(result);
-        let weekday = day.strftime("%a").to_string().to_uppercase();
-        assert_eq!(v["weekday"], weekday, "{result}");
-    }
+    // Kolkata's 1900 offset +05:21:10 prints as +05:21, ten seconds before midnight.
+    let v = answer(&[
+        "add",
+        "1900-01-01T00:00",
+        "0",
+        "-u",
+        "bh",
+        "--tz",
+        "Asia/Kolkata",
+    ]);
+    assert_eq!(
+        (&v["result"], &v["weekday"]),
+        (&json!("1899-12-31T23:59:50+05:21"), &json!("SUN"))
+    );
+    let (code, v) = json(&[
+        "add",
+        "0001-01-01T00:00",
+        "0",
+        "-u",
+        "bh",
+        "--tz",
+        "Asia/Kolkata",
+    ]);
+    assert_eq!(
+        (code, &v["error"]["code"]),
+        (1, &json!("date_out_of_range")),
+        "{v}"
+    );
 }
 
 #[test]

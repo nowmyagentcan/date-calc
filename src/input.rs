@@ -125,13 +125,15 @@ pub fn datetime(text: &str, zone: Option<&TimeZone>) -> Result<Moment, Error> {
         (None, Some(tz)) => civil.to_zoned(tz.clone()).map(|z| z.timestamp()),
         (Some(offset), Some(_)) => offset.to_timestamp(civil),
     };
-    let zoned = instant
-        .map_err(|_| outside())?
-        .to_zoned(zone.unwrap().clone());
-    if !(1..=9999).contains(&zoned.year()) {
+    let moment = Moment::Zoned(
+        instant
+            .map_err(|_| outside())?
+            .to_zoned(zone.unwrap().clone()),
+    );
+    if !(1..=9999).contains(&moment.shown().year()) {
         return Err(outside());
     }
-    Ok(Moment::Zoned(zoned))
+    Ok(moment)
 }
 
 /// Working hours: `HH:MM-HH:MM` windows separated by commas, `24:00` allowed as an end; a window

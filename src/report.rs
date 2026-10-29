@@ -388,7 +388,7 @@ fn add(start: &str, amount: &str, unit: Unit, roll: Roll, o: &Options) -> Result
             amount,
             unit: unit.name(),
             result: r.result.to_string(),
-            weekday: weekday(r.result.date()),
+            weekday: weekday(r.result.shown().date()),
             country,
             region,
             roll: roll_name(roll),
