@@ -84,6 +84,23 @@ impl Server {
         (status, headers.to_owned(), body.to_owned())
     }
 
+    /// The status of a query sent with request line `line` and one more header line, raw bytes.
+    fn status(&self, line: &[u8], header: &[u8]) -> String {
+        let body = r#"{"query":"2026-10-27"}"#;
+        let mut stream = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
+        let host = format!(
+            "\r\nHost: 127.0.0.1:{}\r\nContent-Length: {}\r\n",
+            self.port,
+            body.len()
+        );
+        let request = [line, host.as_bytes(), header, b"\r\n\r\n", body.as_bytes()].concat();
+        stream.write_all(&request).unwrap();
+        let mut response = Vec::new();
+        // A server that drops the request may reset the connection; that reads as no status.
+        let _ = stream.read_to_end(&mut response);
+        String::from_utf8_lossy(response.get(9..12).unwrap_or_default()).into_owned()
+    }
+
     fn post(&self, request: &Value) -> (u16, Value) {
         let body = request.to_string();
         let head = format!(
@@ -436,21 +453,7 @@ fn refuses_malformed_header_names_framing_and_request_lines() {
 #[test]
 fn reads_opaque_header_bytes_and_refuses_control_bytes() {
     let server = Server::start(&["--no-open"]);
-    let body = r#"{"query":"2026-10-27"}"#;
-    let status = |line: &[u8], header: &[u8]| {
-        let mut stream = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
-        let host = format!(
-            "\r\nHost: 127.0.0.1:{}\r\nContent-Length: {}\r\n",
-            server.port,
-            body.len()
-        );
-        let request = [line, host.as_bytes(), header, b"\r\n\r\n", body.as_bytes()].concat();
-        stream.write_all(&request).unwrap();
-        let mut response = Vec::new();
-        // A server that drops the request may reset the connection; that reads as no status.
-        let _ = stream.read_to_end(&mut response);
-        String::from_utf8_lossy(response.get(9..12).unwrap_or_default()).into_owned()
-    };
+    let status = |line: &[u8], header: &[u8]| server.status(line, header);
     let post = b"POST /api HTTP/1.1".as_slice();
     // RFC 9110 §5.5: field values may carry opaque bytes 80-FF; an unknown field is ignored.
     for byte in [0x80, 0xe9, 0xff] {
@@ -470,6 +473,22 @@ fn reads_opaque_header_bytes_and_refuses_control_bytes() {
         raw.len()
     );
     assert_eq!(server.send(&head, raw).0, 400);
+}
+
+#[test]
+#[ignore = "known bug: F07"]
+fn refuses_control_bytes_at_the_edges_of_a_header_value() {
+    let server = Server::start(&["--no-open"]);
+    let post = b"POST /api HTTP/1.1".as_slice();
+    for header in [
+        &b"X-Other: \x0ca"[..],
+        b"X-Other: a\x0c",
+        b"X-Other: \ra",
+        b"X-Other: a\r",
+    ] {
+        assert_eq!(server.status(post, header), "400", "{header:?}");
+    }
+    assert_eq!(server.status(post, b"X-Other: \ta\t"), "200");
 }
 
 #[test]
