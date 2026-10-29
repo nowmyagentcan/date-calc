@@ -2,8 +2,11 @@
 
 use jiff::civil::Date;
 
+use jiff::ToSpan;
+
 use crate::data::{self, Block};
 use crate::error::Error;
+use crate::input::Unit;
 
 const SAT_SUN: u8 = 0b110_0000;
 
@@ -62,6 +65,35 @@ pub struct Between {
     /// The weekend in force at `start`.
     pub weekend: u8,
 }
+
+/// How `add` moves a calendar-unit result that isn't a business day.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Roll {
+    None,
+    Following,
+    Preceding,
+    /// Following unless that changes the month, then preceding.
+    ModifiedFollowing,
+    /// Preceding unless that changes the month, then following.
+    ModifiedPreceding,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Added {
+    pub start: Date,
+    pub amount: i64,
+    pub unit: Unit,
+    pub result: Date,
+    pub roll: Roll,
+    /// The non-business days passed over (or rolled over), at most 100.
+    pub skipped: Vec<(Date, Day)>,
+    pub skipped_more: usize,
+    pub weekend_workdays: Vec<Date>,
+    /// The weekend in force at `start`.
+    pub weekend: u8,
+}
+
+const SKIPPED_MAX: usize = 100;
 
 impl Place {
     /// A country by code, alias or name (`CC-REGION` too), or none for weekends only.
@@ -171,6 +203,110 @@ pub fn between(
         elapsed_days: (end - start).get_days().into(),
         elapsed: iso_duration(start, end),
         holidays,
+        weekend_workdays,
+        weekend: place.weekend_on(start),
+    })
+}
+
+/// Adds business days (Excel WORKDAY: `start` isn't counted, 0 returns it) or calendar units
+/// (months and years clamp to the month's end), then applies `roll` to a calendar-unit result.
+/// Business hours are `hours::add`.
+pub fn add(
+    place: &Place,
+    start: Date,
+    amount: i64,
+    unit: Unit,
+    roll: Roll,
+) -> Result<Added, Error> {
+    let years = place.block.as_ref().map_or((1, 9999), |b| b.country.years);
+    let outside = || {
+        let range = format!("{:04}-{:04}", years.0, years.1);
+        Error::new(
+            "result_out_of_range",
+            format!("The result would be outside {range}."),
+        )
+        .hint("Use a smaller amount.")
+    };
+    let step = |d: Date, forward: bool| {
+        let next = if forward { d.tomorrow() } else { d.yesterday() };
+        next.ok()
+            .filter(|d| (years.0..=years.1).contains(&d.year()))
+            .ok_or_else(outside)
+    };
+    let business = unit == Unit::BusinessDays;
+    if place.weekend == Some(0b111_1111) && (business && amount != 0 || roll != Roll::None) {
+        return Err(Error::new(
+            "no_business_days",
+            "Every day is a weekend day, so there are no business days.",
+        )
+        .hint("Change --weekend."));
+    }
+    let (from, result, passed) = if business {
+        place.covers(start)?;
+        let (mut d, mut left, mut passed) = (start, amount.unsigned_abs(), vec![]);
+        while left > 0 {
+            d = step(d, amount > 0)?;
+            match place.day(d) {
+                Day::Business => left -= 1,
+                day => passed.push((d, day)),
+            }
+        }
+        (start, d, passed)
+    } else {
+        let span = match unit {
+            Unit::Days => amount.days(),
+            Unit::Weeks => amount.weeks(),
+            Unit::Months => amount.months(),
+            Unit::Years => amount.years(),
+            _ => unreachable!("business hours are added by hours::add"),
+        };
+        let raw = start
+            .checked_add(span)
+            .ok()
+            .filter(|d| d.year() >= 1)
+            .ok_or_else(outside)?;
+        if roll != Roll::None {
+            place.covers(raw).map_err(|_| outside())?;
+        }
+        let walk = |forward| -> Result<(Date, Date, Vec<_>), Error> {
+            let (mut d, mut over) = (raw, vec![]);
+            loop {
+                match place.day(d) {
+                    Day::Business => return Ok((raw, d, over)),
+                    day => over.push((d, day)),
+                }
+                d = step(d, forward)?;
+            }
+        };
+        match roll {
+            Roll::None => (raw, raw, vec![]),
+            Roll::Following => walk(true)?,
+            Roll::Preceding => walk(false)?,
+            Roll::ModifiedFollowing | Roll::ModifiedPreceding => {
+                let forward = roll == Roll::ModifiedFollowing;
+                match walk(forward) {
+                    Ok(r) if r.1.first_of_month() == raw.first_of_month() => r,
+                    _ => walk(!forward)?,
+                }
+            }
+        }
+    };
+    let mut weekend_workdays = match business || roll != Roll::None {
+        true => place.workdays(from.min(result), from.max(result)),
+        false => vec![],
+    };
+    weekend_workdays.retain(|&d| !business || d != start);
+    let mut skipped = passed;
+    let skipped_more = skipped.len().saturating_sub(SKIPPED_MAX);
+    skipped.truncate(SKIPPED_MAX);
+    Ok(Added {
+        start,
+        amount,
+        unit,
+        result,
+        roll,
+        skipped,
+        skipped_more,
         weekend_workdays,
         weekend: place.weekend_on(start),
     })
@@ -329,5 +465,117 @@ mod tests {
         );
         let e = between(&lk, date(2026, 12, 1), date(2027, 1, 5), true, true).unwrap_err();
         assert_eq!(e.code, "no_holiday_data");
+    }
+
+    fn added(country: Option<&str>, start: Date, n: i64, unit: Unit, roll: Roll) -> Added {
+        let p = Place::new(country, None, None).unwrap();
+        add(&p, start, n, unit, roll).unwrap()
+    }
+
+    fn workday(country: &str, start: Date, n: i64) -> Date {
+        added(Some(country), start, n, Unit::BusinessDays, Roll::None).result
+    }
+
+    #[test]
+    fn adds_business_days_like_workday() {
+        let r = added(
+            Some("CN"),
+            date(2026, 2, 13),
+            5,
+            Unit::BusinessDays,
+            Roll::None,
+        );
+        assert_eq!(r.result, date(2026, 2, 27));
+        let skipped: Vec<_> = r.skipped.iter().map(|s| (s.0.day(), s.1)).collect();
+        let cny = Day::Holiday("Chinese New Year (Spring Festival)");
+        assert_eq!(
+            skipped,
+            [
+                (15, Day::Weekend),
+                (16, Day::Holiday("Chinese New Year's Eve")),
+                (17, cny),
+                (18, cny),
+                (19, cny),
+                (20, Day::Holiday("Day off (substituted from 02/14/2026)")),
+                (21, Day::Weekend),
+                (22, Day::Weekend),
+                (23, Day::Holiday("Day off (substituted from 02/28/2026)")),
+            ]
+        );
+        assert_eq!(r.weekend_workdays, [date(2026, 2, 14)]);
+        assert_eq!(workday("CN", date(2026, 3, 2), -5), date(2026, 2, 24));
+        assert_eq!(workday("US", date(2026, 7, 2), 1), date(2026, 7, 6));
+        assert_eq!(workday("US", date(2026, 12, 24), 1), date(2026, 12, 28));
+        assert_eq!(workday("CN", date(2026, 2, 14), 0), date(2026, 2, 14));
+        assert_eq!(workday("CN", date(2026, 2, 15), 0), date(2026, 2, 15));
+        let r = added(None, date(2026, 11, 2), 10, Unit::BusinessDays, Roll::None);
+        assert_eq!((r.result, r.skipped.len()), (date(2026, 11, 16), 4));
+    }
+
+    #[test]
+    fn adds_calendar_units_and_rolls() {
+        let months = |start, n, roll| added(Some("DE"), start, n, Unit::Months, roll).result;
+        let jan31 = date(2026, 1, 31);
+        assert_eq!(months(jan31, 1, Roll::None), date(2026, 2, 28));
+        assert_eq!(months(jan31, 1, Roll::Following), date(2026, 3, 2));
+        assert_eq!(months(jan31, 1, Roll::ModifiedFollowing), date(2026, 2, 27));
+        assert_eq!(months(jan31, 1, Roll::Preceding), date(2026, 2, 27));
+        // 2026-08-01 is a Saturday: preceding would leave August.
+        let jul1 = date(2026, 7, 1);
+        assert_eq!(months(jul1, 1, Roll::Preceding), date(2026, 7, 31));
+        assert_eq!(months(jul1, 1, Roll::ModifiedPreceding), date(2026, 8, 3));
+        let r = added(Some("DE"), jan31, 1, Unit::Months, Roll::ModifiedFollowing);
+        assert_eq!(r.skipped, [(date(2026, 2, 28), Day::Weekend)]);
+        let r = added(
+            Some("DE"),
+            date(2026, 10, 3),
+            0,
+            Unit::Days,
+            Roll::Following,
+        );
+        assert_eq!(r.result, date(2026, 10, 5));
+        assert_eq!(r.skipped.len(), 2);
+        let r = added(None, jan31, 1, Unit::Months, Roll::None);
+        assert_eq!((r.result, r.skipped.len()), (date(2026, 2, 28), 0));
+        let unit = |u, n| added(None, date(2024, 2, 29), n, u, Roll::None).result;
+        assert_eq!(unit(Unit::Days, -60), date(2023, 12, 31));
+        assert_eq!(unit(Unit::Weeks, 2), date(2024, 3, 14));
+        assert_eq!(unit(Unit::Years, 1), date(2025, 2, 28));
+    }
+
+    #[test]
+    fn caps_skipped_days_at_100() {
+        let r = added(None, date(2026, 1, 5), 100, Unit::BusinessDays, Roll::None);
+        assert_eq!((r.skipped.len(), r.skipped_more), (40, 0));
+        let r = added(None, date(2026, 1, 5), 1000, Unit::BusinessDays, Roll::None);
+        assert_eq!((r.skipped.len(), r.skipped_more), (100, 300));
+    }
+
+    #[test]
+    fn results_outside_the_range_fail() {
+        let p = Place::new(Some("US"), None, None).unwrap();
+        let e = add(&p, date(2050, 12, 1), 30, Unit::BusinessDays, Roll::None).unwrap_err();
+        assert_eq!(e.code, "result_out_of_range");
+        assert_eq!(e.message, "The result would be outside 2000-2050.");
+        assert_eq!(e.hint.as_deref(), Some("Use a smaller amount."));
+        let none = Place::new(None, None, None).unwrap();
+        let e = add(&none, date(9999, 12, 30), 5, Unit::BusinessDays, Roll::None).unwrap_err();
+        assert_eq!(e.message, "The result would be outside 0001-9999.");
+        let e = add(&none, date(2, 1, 1), -2, Unit::Years, Roll::None).unwrap_err();
+        assert_eq!(e.code, "result_out_of_range");
+        let e = add(&p, date(2050, 12, 1), 1, Unit::Months, Roll::Following).unwrap_err();
+        assert_eq!(e.code, "result_out_of_range");
+        let e = add(&p, date(1999, 1, 4), 1, Unit::BusinessDays, Roll::None).unwrap_err();
+        assert_eq!(e.code, "no_holiday_data");
+        let all = Place::new(None, None, Some(0b111_1111)).unwrap();
+        let e = add(&all, date(2026, 1, 5), 1, Unit::BusinessDays, Roll::None).unwrap_err();
+        assert_eq!(e.code, "no_business_days");
+        assert_eq!(
+            e.message,
+            "Every day is a weekend day, so there are no business days."
+        );
+        assert_eq!(e.hint.as_deref(), Some("Change --weekend."));
+        assert!(add(&all, date(2026, 1, 5), 0, Unit::BusinessDays, Roll::None).is_ok());
+        assert!(add(&all, date(2026, 1, 5), 1, Unit::Days, Roll::None).is_ok());
     }
 }
