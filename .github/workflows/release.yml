@@ -136,7 +136,7 @@ jobs:
           Set-Content "$dir\notes.old" 'kept'
           powershell -NoProfile -File dist/install.ps1
           $files = (Get-ChildItem $dir -Name) -join ','
-          if ($LASTEXITCODE -or $files -ne 'notes.old,date-calc.exe') { throw "left $files" }
+          if ($LASTEXITCODE -or $files -ne 'date-calc.exe,notes.old') { throw "left $files" }
           Remove-Item "$dir\notes.old"
           # An upgrade from an archive without date-calc.exe, or with one that doesn't run,
           # fails and keeps the installed one.
