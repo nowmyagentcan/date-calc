@@ -998,7 +998,7 @@ const ERRORS: &[(&str, &str, &str, Option<&str>)] = &[
         "holidays DE 2051",
         "no_holiday_data",
         "Holiday data for Germany covers 2000-2050; 2051-01-01 is outside it.",
-        Some("Pick dates inside that range, or leave out --country to skip only weekends."),
+        Some("Pick a year or dates inside that range."),
     ),
     (
         "between 2026-01-01 2026-01-02 --weekend XYZ",

@@ -402,8 +402,10 @@ pub fn holidays(place: &Place, from: Date, to: Date) -> Result<Listing, Error> {
         Error::new("country_required", "Listing holidays needs a country.")
             .hint("Pick a country first, e.g. DE.")
     })?;
-    b.covers(from)?;
-    b.covers(to)?;
+    // A listing needs a country, so the usual hint to leave it out doesn't apply.
+    let inside = |e: Error| e.hint("Pick a year or dates inside that range.");
+    b.covers(from).map_err(inside)?;
+    b.covers(to).map_err(inside)?;
     let holidays: Vec<_> = b
         .holidays(place.region, from, to)
         .map(|h| Listed {
