@@ -1392,7 +1392,6 @@ fn reads_a_backwards_holiday_range_in_order() {
 }
 
 #[test]
-#[ignore = "known bug: F09"]
 fn counts_only_the_arguments_against_the_length_limit() {
     let name = format!("date-calc{}", std::env::consts::EXE_SUFFIX);
     let base = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("long-path");

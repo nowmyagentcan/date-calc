@@ -311,9 +311,10 @@ impl Command {
     }
 }
 
-/// The limits clap can't state: argument length, and flags that belong to one command.
+/// The limits clap can't state: argument length (the program's own path aside), and flags that
+/// belong to one command.
 fn check(args: &[OsString]) -> Result<(), Error> {
-    if args.iter().any(|a| a.len() > 256) {
+    if args.iter().skip(1).any(|a| a.len() > 256) {
         return Err(Error::new("usage", "An argument is longer than 256 bytes."));
     }
     let excluding = args
