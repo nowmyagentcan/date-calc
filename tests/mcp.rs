@@ -611,3 +611,25 @@ fn refuses_a_region_without_a_country() {
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(error["error"]["code"], "country_required", "{error}");
 }
+
+#[test]
+fn answers_each_of_many_outstanding_calls_under_its_own_id() {
+    let mut messages = handshake();
+    messages.extend((1..=64).map(|i| {
+        call(
+            i,
+            "add_to_date",
+            json!({"start": "2026-01-01", "amount": i, "unit": "days"}),
+        )
+    }));
+    let (responses, _) = session(&messages);
+    assert_eq!(responses.len(), 65);
+    for (i, response) in (0..).zip(&responses) {
+        assert_eq!(response["id"], i);
+        if i > 0 {
+            let want = jiff::civil::date(2026, 1, 1) + jiff::Span::new().days(i);
+            let result = &response["result"]["structuredContent"]["result"];
+            assert_eq!(result, &json!(want.to_string()), "{response}");
+        }
+    }
+}
