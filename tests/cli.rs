@@ -1293,15 +1293,26 @@ fn added_business_hours_count_back_across_a_gap_between_windows() {
 }
 
 #[test]
-#[ignore = "known bug: F05"]
 fn overnight_hours_at_the_end_of_the_data_agree_with_add() {
     let extra = ["-c", "LK", "--hours", "22:00-06:00"];
-    let (code, a) = json(&[&["add", "2026-12-31T23:00", "1", "-u", "bh"], &extra[..]].concat());
-    if code == 0 {
-        let to = a["result"].as_str().unwrap();
-        let h = answer(&[&["hours", "2026-12-31T23:00", to], &extra[..]].concat());
-        assert_eq!(h["seconds"], 3600);
-    }
+    let a = answer(&[&["add", "2026-12-31T23:00", "1", "-u", "bh"], &extra[..]].concat());
+    let to = a["result"].as_str().unwrap();
+    assert_eq!(to, "2027-01-01T00:00:00");
+    let h = answer(&[&["hours", "2026-12-31T23:00", to], &extra[..]].concat());
+    assert_eq!(h["seconds"], 3600);
+    // 2027-01-01's own window opens before this end, so it needs data the bundle lacks.
+    let (code, v) = json(
+        &[
+            &["hours", "2026-12-31T23:00", "2027-01-01T23:00"],
+            &extra[..],
+        ]
+        .concat(),
+    );
+    assert_eq!(
+        (code, &v["error"]["code"]),
+        (1, &json!("no_holiday_data")),
+        "{v}"
+    );
 }
 
 #[test]

@@ -158,9 +158,17 @@ pub fn between(
         (start, end)
     };
     let (from, to) = (lo.date(), hi.date());
-    place.covers(from)?;
-    place.covers(to)?;
     let (a, b, zone) = (lo.second(), hi.second(), start.zone());
+    // The end's own day needs data only if one of its windows opens before the end; otherwise
+    // only an overnight window of the day before reaches it, as in `add`.
+    let opens = windows.iter().any(|w| edge(to, w.start, zone) < b);
+    let last = if opens {
+        to
+    } else {
+        to.yesterday().unwrap_or(to)
+    };
+    place.covers(from)?;
+    place.covers(last.max(from))?;
     let (mut seconds, mut business_days, mut t) = (0, 0, a);
     let mut d = first_day(place, from);
     loop {
