@@ -156,7 +156,7 @@ const SAMPLES = {
   "2026-11-02 10:00 to 2026-11-05 15:00": { op: "hours", result: { start: "2026-11-02T10:00:00", end: "2026-11-05T15:00:00", country: { code: "DE", name: "Germany" }, region: null, hours: "09:00-17:00", timezone: null, seconds: 104400, business_hours: 29.0, duration: "29:00", business_days: 4, holidays: [], weekend_workdays: [], weekend: ["SAT", "SUN"], warnings: [], data: D },
     text: "29:00 business hours (29.00 h)\nMon 2026-11-02 10:00 to Thu 2026-11-05 15:00 · Germany\nHours 09:00-17:00 on 4 business days · clock time\npython-holidays 0.107 (2026-10-19)\n" },
   "holidays 2026": { op: "holidays", result: { country: { code: "DE", name: "Germany" }, region: null, from: "2026-01-01", to: "2026-12-31",
-    holidays: [hol("2026-01-01", "THU", "New Year's Day"), hol("2026-04-03", "FRI", "Good Friday"), hol("2026-04-06", "MON", "Easter Monday"), hol("2026-05-01", "FRI", "Labor Day"), hol("2026-05-14", "THU", "Ascension Day"), hol("2026-05-25", "MON", "Pentecost Monday"), hol("2026-10-03", "SAT", "German Unity Day"), hol("2026-12-25", "FRI", "Christmas Day"), hol("2026-12-26", "SAT", "Second Day of Christmas")].map(h => ({ ...h, scope: "national" })),
+    holidays: [hol("2026-01-01", "THU", "New Year's Day"), hol("2026-04-03", "FRI", "Good Friday"), hol("2026-04-06", "MON", "Easter Monday"), hol("2026-05-01", "FRI", "Labor Day"), hol("2026-05-14", "THU", "Ascension Day"), hol("2026-05-25", "MON", "Pentecost Monday"), hol("2026-10-03", "SAT", "German Unity Day"), hol("2026-12-25", "FRI", "Christmas Day"), hol("2026-12-26", "SAT", "Second Day of Christmas")],
     regional: [hol("2026-01-06", "TUE", "Epiphany", { regions: ["Augsburg", "BW", "BY", "ST"] }), hol("2026-03-08", "SUN", "Women's Day", { regions: ["BE", "MV"] }), hol("2026-04-05", "SUN", "Easter Sunday", { regions: ["BB"] }), hol("2026-05-24", "SUN", "Pentecost", { regions: ["BB"] }), hol("2026-06-04", "THU", "Corpus Christi", { regions: ["Augsburg", "BW", "BY", "HE", "NW", "RP", "SL"] }), hol("2026-08-08", "SAT", "Augsburg Peace Festival", { regions: ["Augsburg"] }), hol("2026-08-15", "SAT", "Assumption Day", { regions: ["Augsburg", "SL"] }), hol("2026-09-20", "SUN", "World Children's Day", { regions: ["TH"] }), hol("2026-10-31", "SAT", "Reformation Day", { regions: ["BB", "HB", "HH", "MV", "NI", "SH", "SN", "ST", "TH"] }), hol("2026-11-01", "SUN", "All Saints' Day", { regions: ["Augsburg", "BW", "BY", "NW", "RP", "SL"] }), hol("2026-11-18", "WED", "Repentance and Prayer Day", { regions: ["SN"] })],
     weekend_workdays: [], weekend: ["SAT", "SUN"], warnings: [], data: D },
     text: "Germany · 2026 · 9 national holidays\n  Thu 2026-01-01  New Year's Day\n  Fri 2026-04-03  Good Friday\n  Mon 2026-04-06  Easter Monday\n  Fri 2026-05-01  Labor Day\n  Thu 2026-05-14  Ascension Day\n  Mon 2026-05-25  Pentecost Monday\n  Sat 2026-10-03  German Unity Day\n  Fri 2026-12-25  Christmas Day\n  Sat 2026-12-26  Second Day of Christmas\nRegional:\n  Tue 2026-01-06  Epiphany                   Augsburg, BW, BY, ST\n  Sun 2026-03-08  Women's Day                BE, MV\n  Sun 2026-04-05  Easter Sunday              BB\n  Sun 2026-05-24  Pentecost                  BB\n  Thu 2026-06-04  Corpus Christi             Augsburg, BW, BY, HE, NW, RP, SL\n  Sat 2026-08-08  Augsburg Peace Festival    Augsburg\n  Sat 2026-08-15  Assumption Day             Augsburg, SL\n  Sun 2026-09-20  World Children's Day       TH\n  Sat 2026-10-31  Reformation Day            BB, HB, HH, MV, NI, SH, SN, ST, TH\n  Sun 2026-11-01  All Saints' Day            Augsburg, BW, BY, NW, RP, SL\n  Wed 2026-11-18  Repentance and Prayer Day  SN\npython-holidays 0.107 (2026-10-19)\n" },
@@ -173,7 +173,6 @@ const SAMPLES = {
 };
 const REGIONS = {
   DE: [["BB", "Brandenburg"], ["BE", "Berlin"], ["BW", "Baden-Württemberg"], ["BY", "Bayern"], ["HB", "Bremen"], ["HE", "Hessen"], ["HH", "Hamburg"], ["MV", "Mecklenburg-Vorpommern"], ["NI", "Niedersachsen"], ["NW", "Nordrhein-Westfalen"], ["RP", "Rheinland-Pfalz"], ["SH", "Schleswig-Holstein"], ["SL", "Saarland"], ["SN", "Sachsen"], ["ST", "Sachsen-Anhalt"], ["TH", "Thüringen"], ["Augsburg"]],
-  GB: [["ENG", "England"], ["NIR", "Northern Ireland"], ["SCT", "Scotland"], ["WLS", "Wales"]],
 };
 const COUNTRIES = [["AE", "United Arab Emirates"], ["CN", "China"], ["DE", "Germany"], ["GB", "United Kingdom"], ["IN", "India"], ["JP", "Japan"], ["US", "United States"]];
 
@@ -205,7 +204,7 @@ const CALENDARS = { gregorian: "Gregorian", "islamic-umalqura": "Islamic (Umm al
 
 // Each view returns [headline, details] for one operation's result.
 const VIEWS = {
-  between: r => [big(r.business_days, count(r.business_days, "business day").replace(/^\S+ /, "")),
+  between: r => [big(r.business_days, Math.abs(r.business_days) === 1 ? "business day" : "business days"),
     lines(`${r.start} to ${r.end} (${ENDS[2 * r.include_start + r.include_end]}) · ${place(r)}`,
       `${count(r.calendar_days, "day")}: ${r.weekend_days} weekend, ${count(r.holiday_days, "holiday")} · ${count(Math.abs(r.elapsed_days), "day")} apart`)
     + (r.holidays.length ? table(holidayRows(r.holidays)) : "")],
@@ -233,7 +232,7 @@ const VIEWS = {
 function done({ op, result: r, text }) {
   const [headline, details] = VIEWS[op](r);
   out.dataset.text = text;
-  out.innerHTML = `<div class="head">${headline}<div class="acts"><button type="button" data-copy>${COPY}Copy</button><button type="button" data-save>${SAVE}Save</button></div></div>`
+  out.innerHTML = `<div class="head">${headline}<div class="acts"><button type="button">${COPY}Copy</button><button type="button" data-save>${SAVE}Save</button></div></div>`
     + details
     + (r.weekend_workdays?.length ? lines(`Worked weekend days: ${r.weekend_workdays.map(day).join(", ")}`) : "")
     + (r.warnings.length ? `<ul>${r.warnings.map(w => `<li>${WARN}<span>${esc(w.message)}</span></li>`).join("")}</ul>` : "")
