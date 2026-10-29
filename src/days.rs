@@ -102,7 +102,7 @@ pub struct Added {
     pub warnings: Vec<Warning>,
 }
 
-const SKIPPED_MAX: usize = 100;
+pub(crate) const SKIPPED_MAX: usize = 100;
 
 /// A holiday in a listing: `scope` is `national` or `regional`.
 #[derive(Debug, PartialEq)]
@@ -183,6 +183,51 @@ impl Place {
         b.holidays(self.region, from, to).map(Entry::from).collect()
     }
 
+    /// A result outside the country's data years, or 0001-9999 without a country.
+    pub(crate) fn out_of_range(&self) -> Error {
+        let (y0, y1) = self.block.as_ref().map_or((1, 9999), |b| b.country.years);
+        Error::new(
+            "result_out_of_range",
+            format!("The result would be outside {y0:04}-{y1:04}."),
+        )
+        .hint("Use a smaller amount.")
+    }
+
+    /// The next date (or the previous one), failing with `result_out_of_range` past the years
+    /// a result may fall in.
+    pub(crate) fn step(&self, d: Date, forward: bool) -> Result<Date, Error> {
+        let (y0, y1) = self.block.as_ref().map_or((1, 9999), |b| b.country.years);
+        let next = if forward { d.tomorrow() } else { d.yesterday() };
+        next.ok()
+            .filter(|d| (y0..=y1).contains(&d.year()))
+            .ok_or_else(|| self.out_of_range())
+    }
+
+    /// Fails when `--weekend` leaves no business day at all.
+    pub(crate) fn has_business_days(&self) -> Result<(), Error> {
+        if self.weekend == Some(0b111_1111) {
+            return Err(Error::new(
+                "no_business_days",
+                "Every day is a weekend day, so there are no business days.",
+            )
+            .hint("Change --weekend."));
+        }
+        Ok(())
+    }
+
+    /// Warning `start_not_business_day` when adding nothing to a day that isn't a business day.
+    pub(crate) fn start_warning(&self, start: Date) -> Option<Warning> {
+        if self.day(start) == Day::Business {
+            return None;
+        }
+        let in_country = match &self.block {
+            Some(b) => format!(" in {}", b.country.name),
+            None => String::new(),
+        };
+        let message = format!("{start} is not a business day{in_country}.");
+        warning("start_not_business_day", message)
+    }
+
     /// Weekend days worked by decree from `from` to `to`, both included.
     pub(crate) fn workdays(&self, from: Date, to: Date) -> Vec<Date> {
         let Some(b) = &self.block else { return vec![] };
@@ -252,34 +297,16 @@ pub fn add(
     unit: Unit,
     roll: Roll,
 ) -> Result<Added, Error> {
-    let years = place.block.as_ref().map_or((1, 9999), |b| b.country.years);
-    let outside = || {
-        let range = format!("{:04}-{:04}", years.0, years.1);
-        Error::new(
-            "result_out_of_range",
-            format!("The result would be outside {range}."),
-        )
-        .hint("Use a smaller amount.")
-    };
-    let step = |d: Date, forward: bool| {
-        let next = if forward { d.tomorrow() } else { d.yesterday() };
-        next.ok()
-            .filter(|d| (years.0..=years.1).contains(&d.year()))
-            .ok_or_else(outside)
-    };
+    let outside = || place.out_of_range();
     let business = unit == Unit::BusinessDays;
-    if place.weekend == Some(0b111_1111) && (business && amount != 0 || roll != Roll::None) {
-        return Err(Error::new(
-            "no_business_days",
-            "Every day is a weekend day, so there are no business days.",
-        )
-        .hint("Change --weekend."));
+    if business && amount != 0 || roll != Roll::None {
+        place.has_business_days()?;
     }
     let (from, result, passed) = if business {
         place.covers(start)?;
         let (mut d, mut left, mut passed) = (start, amount.unsigned_abs(), vec![]);
         while left > 0 {
-            d = step(d, amount > 0)?;
+            d = place.step(d, amount > 0)?;
             match place.day(d) {
                 Day::Business => left -= 1,
                 day => passed.push((d, day)),
@@ -309,7 +336,7 @@ pub fn add(
                     Day::Business => return Ok((raw, d, over)),
                     day => over.push((d, day)),
                 }
-                d = step(d, forward)?;
+                d = place.step(d, forward)?;
             }
         };
         match roll {
@@ -332,13 +359,8 @@ pub fn add(
         weekend_workdays.retain(|&d| !business || d != start);
         warnings = day_warnings(place, lo, hi, &place.holidays(lo, hi), business);
     }
-    if business && amount == 0 && place.day(start) != Day::Business {
-        let in_country = match &place.block {
-            Some(b) => format!(" in {}", b.country.name),
-            None => String::new(),
-        };
-        let message = format!("{start} is not a business day{in_country}.");
-        warnings.extend(warning("start_not_business_day", message));
+    if business && amount == 0 {
+        warnings.extend(place.start_warning(start));
     }
     let mut skipped = passed;
     let skipped_more = skipped.len().saturating_sub(SKIPPED_MAX);

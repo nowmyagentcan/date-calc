@@ -1,6 +1,7 @@
 //! The business day, add and holiday examples every face must answer the same way.
 
 use date_calc::days::{self, Day, Place, Roll};
+use date_calc::hours;
 use date_calc::input::{self, Unit};
 use jiff::civil::{Date, date};
 
@@ -319,5 +320,12 @@ fn meets_the_time_targets() {
             Unit::BusinessDays,
             Roll::None,
         ))
+    });
+    check("US hours 2026 in New York", 60, &|| {
+        let ny = input::timezone("America/New_York").unwrap();
+        let start = input::datetime("2026-01-01", Some(&ny)).unwrap();
+        let end = input::datetime("2026-12-31 23:59", Some(&ny)).unwrap();
+        let windows = input::hours("09:00-17:00").unwrap();
+        drop(hours::between(&place("US"), &start, &end, &windows).unwrap());
     });
 }

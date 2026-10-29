@@ -1,13 +1,14 @@
-//! Business hours: working windows on business days, counted between two date-times.
+//! Business hours: working windows on business days, counted between two date-times or
+//! consumed from one.
 
 use std::fmt;
 
 use jiff::civil::{Date, DateTime, Time};
 use jiff::fmt::temporal::DateTimePrinter;
 use jiff::tz::TimeZone;
-use jiff::{SignedDuration, Unit, Zoned};
+use jiff::{SignedDuration, Timestamp, Unit, Zoned};
 
-use crate::days::{Day, Entry, Place, Warning, day_warnings};
+use crate::days::{Day, Entry, Place, SKIPPED_MAX, Warning, day_warnings};
 use crate::error::Error;
 
 /// Seconds in a day without clock changes.
@@ -64,6 +65,21 @@ impl Moment {
             Moment::Civil(dt) => dt.duration_since(EPOCH).as_secs(),
             Moment::Zoned(z) => z.timestamp().as_second(),
         }
+    }
+
+    /// The moment `second` names on the line of `like`, if it is in 0001-9999.
+    fn at(second: i64, like: &Moment) -> Option<Moment> {
+        let moment = match like {
+            Moment::Civil(_) => {
+                Moment::Civil(EPOCH.checked_add(SignedDuration::from_secs(second)).ok()?)
+            }
+            Moment::Zoned(z) => Moment::Zoned(
+                Timestamp::from_second(second)
+                    .ok()?
+                    .to_zoned(z.time_zone().clone()),
+            ),
+        };
+        (moment.date().year() >= 1).then_some(moment)
     }
 }
 
@@ -132,12 +148,7 @@ pub fn between(
     place.covers(to)?;
     let (a, b, zone) = (lo.second(), hi.second(), start.zone());
     let (mut seconds, mut business_days) = (0, 0);
-    // A window that runs past midnight can reach in from the day before.
-    let mut d = from
-        .yesterday()
-        .ok()
-        .filter(|d| place.covers(*d).is_ok())
-        .unwrap_or(from);
+    let mut d = first_day(place, from);
     loop {
         if place.day(d) == Day::Business {
             let worked: i64 = windows
@@ -161,6 +172,102 @@ pub fn between(
         business_days,
         holidays,
         weekend_workdays: place.workdays(from, to),
+        weekend: place.weekend_on(start.date()),
+        warnings,
+    })
+}
+
+/// The first day whose windows can reach `date`: the day before, when the data covers it, as a
+/// window that runs past midnight belongs to the day it starts on.
+fn first_day(place: &Place, date: Date) -> Date {
+    date.yesterday()
+        .ok()
+        .filter(|d| place.covers(*d).is_ok())
+        .unwrap_or(date)
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Added {
+    pub start: Moment,
+    /// Seconds of working time; negative goes back.
+    pub amount: i64,
+    pub result: Moment,
+    /// The non-business days passed over, at most 100.
+    pub skipped: Vec<(Date, Day)>,
+    pub skipped_more: usize,
+    pub weekend_workdays: Vec<Date>,
+    /// The weekend in force at `start`.
+    pub weekend: u8,
+    pub warnings: Vec<Warning>,
+}
+
+/// Consumes `amount` seconds of working time from `start`, forward or (negative) backward.
+/// Outside working time it begins at the next window's start (backward: the previous window's
+/// end), and a result exactly at a window's end stays there.
+pub fn add(place: &Place, start: &Moment, amount: i64, windows: &[Window]) -> Result<Added, Error> {
+    place.covers(start.date())?;
+    let (forward, zone) = (amount > 0, start.zone());
+    let (mut t, mut left) = (start.second(), amount.abs());
+    if left > 0 {
+        place.has_business_days()?;
+    }
+    let mut d = if forward {
+        first_day(place, start.date())
+    } else {
+        start.date()
+    };
+    while left > 0 {
+        if place.day(d) == Day::Business {
+            for i in 0..windows.len() {
+                let w = windows[if forward { i } else { windows.len() - 1 - i }];
+                let (ws, we) = (edge(d, w.start, zone), edge(d, w.end, zone));
+                let (from, to) = if forward {
+                    (ws.max(t), we)
+                } else {
+                    (ws, we.min(t))
+                };
+                let free = (to - from).max(0);
+                if free >= left {
+                    t = if forward { from + left } else { to - left };
+                    left = 0;
+                    break;
+                } else if free > 0 {
+                    left -= free;
+                    t = if forward { to } else { from };
+                }
+            }
+        }
+        if left > 0 {
+            d = place.step(d, forward)?;
+        }
+    }
+    let result = Moment::at(t, start).ok_or_else(|| place.out_of_range())?;
+    let (lo, hi) = (
+        start.date().min(result.date()),
+        start.date().max(result.date()),
+    );
+    let mut skipped: Vec<_> = lo
+        .series(jiff::Span::new().days(1))
+        .take_while(|&d| d <= hi)
+        .filter(|&d| d != lo && d != hi)
+        .filter_map(|d| Some((d, place.day(d))).filter(|p| p.1 != Day::Business))
+        .collect();
+    if !forward {
+        skipped.reverse();
+    }
+    let skipped_more = skipped.len().saturating_sub(SKIPPED_MAX);
+    skipped.truncate(SKIPPED_MAX);
+    let mut warnings = day_warnings(place, lo, hi, &place.holidays(lo, hi), true);
+    if amount == 0 {
+        warnings.extend(place.start_warning(start.date()));
+    }
+    Ok(Added {
+        start: start.clone(),
+        amount,
+        result,
+        skipped,
+        skipped_more,
+        weekend_workdays: place.workdays(lo, hi),
         weekend: place.weekend_on(start.date()),
         warnings,
     })
@@ -304,5 +411,121 @@ mod tests {
         assert_eq!(m.to_string(), "2026-11-02T04:00:00+00:00");
         let m = datetime("2026-11-02 09:30", None).unwrap();
         assert_eq!(m.to_string(), "2026-11-02T09:30:00");
+    }
+
+    fn plus(place: &Place, start: &str, hours_: f64, windows: &str, tz: Option<&str>) -> Added {
+        let tz = tz.map(|t| timezone(t).unwrap());
+        let start = datetime(start, tz.as_ref()).unwrap();
+        let seconds = (hours_ * 3600.0) as i64;
+        add(place, &start, seconds, &hours(windows).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn adds_business_hours_through_windows() {
+        let de = Place::new(Some("DE"), None, None).unwrap();
+        let at = |start, n| plus(&de, start, n, "09:00-17:00", None).result.to_string();
+        assert_eq!(at("2026-11-02 16:00", 3.0), "2026-11-03T11:00:00");
+        assert_eq!(at("2026-11-03 10:00", -2.0), "2026-11-02T16:00:00");
+        // A result exactly at a window's end stays there.
+        assert_eq!(at("2026-11-02 15:00", 2.0), "2026-11-02T17:00:00");
+        assert_eq!(at("2026-11-02 11:00", -2.0), "2026-11-02T09:00:00");
+        // Outside working time it begins at the next window (backward: the previous one).
+        assert_eq!(at("2026-11-02 06:00", 1.5), "2026-11-02T10:30:00");
+        assert_eq!(at("2026-11-02 20:00", -1.0), "2026-11-02T16:00:00");
+        assert_eq!(at("2026-11-02 20:00", 0.0), "2026-11-02T20:00:00");
+        // Fri 16:00 + 2 h passes the weekend; German Unity Day (Sat 2026-10-03) too.
+        let r = plus(&de, "2026-10-02 16:00", 2.0, "09:00-17:00", None);
+        assert_eq!(r.result.to_string(), "2026-10-05T10:00:00");
+        let days: Vec<_> = r.skipped.iter().map(|s| (s.0.to_string(), s.1)).collect();
+        assert_eq!(
+            days,
+            [
+                ("2026-10-03".into(), Day::Weekend),
+                ("2026-10-04".into(), Day::Weekend)
+            ]
+        );
+        let r = plus(&de, "2026-10-05 10:00", -2.0, "09:00-17:00", None);
+        assert_eq!(r.result.to_string(), "2026-10-02T16:00:00");
+        assert_eq!(r.skipped[0].0, jiff::civil::date(2026, 10, 4));
+        let lunch = plus(
+            &de,
+            "2026-11-02 11:00",
+            3.0,
+            "09:00-12:00,13:00-17:00",
+            None,
+        );
+        assert_eq!(lunch.result.to_string(), "2026-11-02T15:00:00");
+        let lunch = plus(
+            &de,
+            "2026-11-02 15:00",
+            -3.0,
+            "09:00-12:00,13:00-17:00",
+            None,
+        );
+        assert_eq!(lunch.result.to_string(), "2026-11-02T11:00:00");
+    }
+
+    #[test]
+    fn adds_through_overnight_windows_and_zones() {
+        let none = Place::new(None, None, None).unwrap();
+        // Thursday's 22:00-06:00 window is still open at Fri 03:00.
+        let r = plus(&none, "2026-11-06 03:00", 2.0, "22:00-06:00", None);
+        assert_eq!(r.result.to_string(), "2026-11-06T05:00:00");
+        let r = plus(&none, "2026-11-06 03:00", 4.0, "22:00-06:00", None);
+        assert_eq!(r.result.to_string(), "2026-11-06T23:00:00");
+        // New York springs forward on Sun 2026-03-08: 8 working hours are 9 on the clock.
+        let anyday = Place::new(None, None, Some(0)).unwrap();
+        let ny = Some("America/New_York");
+        let r = plus(&anyday, "2026-03-08 00:00", 8.0, "00:00-24:00", ny);
+        assert_eq!(r.result.to_string(), "2026-03-08T09:00:00-04:00");
+        let r = plus(&anyday, "2026-03-08T13:00:00Z", -8.0, "00:00-24:00", ny);
+        assert_eq!(r.result.to_string(), "2026-03-08T00:00:00-05:00");
+    }
+
+    #[test]
+    fn adding_hours_warns_and_fails_like_business_days() {
+        let cn = Place::new(Some("CN"), None, None).unwrap();
+        let r = plus(&cn, "2026-02-15 10:00", 0.0, "09:00-17:00", None);
+        assert_eq!(r.result, r.start);
+        assert_eq!(
+            r.warnings,
+            [Warning {
+                code: "start_not_business_day",
+                message: "2026-02-15 is not a business day in China.".into()
+            }]
+        );
+        // Sat 2026-02-14 is worked by decree.
+        let r = plus(&cn, "2026-02-13 16:00", 2.0, "09:00-17:00", None);
+        assert_eq!(r.result.to_string(), "2026-02-14T10:00:00");
+        assert_eq!(r.weekend_workdays, [jiff::civil::date(2026, 2, 14)]);
+        let none = Place::new(None, None, None).unwrap();
+        let r = plus(&none, "2026-11-02 09:00", 1.0, "09:00-17:00", None);
+        assert_eq!(r.warnings[0].code, "no_country");
+        let windows = hours("09:00-17:00").unwrap();
+        let fail = |place: &Place, start: &str, seconds| {
+            let start = datetime(start, None).unwrap();
+            add(place, &start, seconds, &windows).unwrap_err()
+        };
+        let us = Place::new(Some("US"), None, None).unwrap();
+        let e = fail(&us, "2050-12-30 09:00", 3600 * 100);
+        assert_eq!(e.message, "The result would be outside 2000-2050.");
+        assert_eq!(
+            fail(&none, "9999-12-31 09:00", 3600 * 9).code,
+            "result_out_of_range"
+        );
+        assert_eq!(
+            fail(&none, "0001-01-01 10:00", -3600 * 2).code,
+            "result_out_of_range"
+        );
+        assert_eq!(fail(&us, "1999-12-31 09:00", 3600).code, "no_holiday_data");
+        let all = Place::new(None, None, Some(0b111_1111)).unwrap();
+        assert_eq!(
+            fail(&all, "2026-11-02 09:00", 3600).code,
+            "no_business_days"
+        );
+        let r = plus(&none, "2026-11-02 09:00", 1000.0, "09:00-17:00", None);
+        assert_eq!((r.skipped.len(), r.skipped_more), (48, 0));
+        let r = plus(&none, "2026-01-05 09:00", 8000.0, "09:00-17:00", None);
+        assert_eq!((r.skipped.len(), r.skipped_more), (100, 298));
     }
 }
