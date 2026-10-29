@@ -102,10 +102,6 @@ impl Unit {
         }
     }
 
-    pub fn is_business(self) -> bool {
-        matches!(self, Unit::BusinessDays | Unit::BusinessHours)
-    }
-
     /// The largest amount allowed, and how messages write it.
     fn limit(self) -> (u64, &'static str) {
         match self {

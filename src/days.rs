@@ -161,16 +161,11 @@ impl Place {
 
     /// A weekend day worked by decree is a business day unless it is also a holiday.
     pub fn day(&self, date: Date) -> Day {
-        let weekday = date.weekday().to_monday_zero_offset();
-        let Some(b) = &self.block else {
-            return match self.weekend_on(date) >> weekday & 1 {
-                1 => Day::Weekend,
-                _ => Day::Business,
-            };
-        };
-        if self.weekend_on(date) >> weekday & 1 == 1 && !b.worked_by_decree(self.region, date) {
+        let off = self.weekend_on(date) >> date.weekday().to_monday_zero_offset() & 1 == 1;
+        let b = self.block.as_ref();
+        if off && !b.is_some_and(|b| b.worked_by_decree(self.region, date)) {
             Day::Weekend
-        } else if let Some(h) = b.holidays(self.region, date, date).next() {
+        } else if let Some(h) = b.and_then(|b| b.holidays(self.region, date, date).next()) {
             Day::Holiday(h.name)
         } else {
             Day::Business
@@ -191,9 +186,7 @@ impl Place {
     /// Weekend days worked by decree from `from` to `to`, both included.
     fn workdays(&self, from: Date, to: Date) -> Vec<Date> {
         let Some(b) = &self.block else { return vec![] };
-        let mut days: Vec<_> = b.decree_workdays(self.region, from, to).collect();
-        days.dedup();
-        days
+        b.decree_workdays(self.region, from, to).collect()
     }
 }
 
