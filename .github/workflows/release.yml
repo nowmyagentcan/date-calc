@@ -97,8 +97,11 @@ jobs:
             tar -xzf ../dist/*-${{ matrix.target }}.tar.gz
             if [ "$RUNNER_OS" = Linux ]; then file date-calc | grep -E 'static(-pie|ally) linked'; fi
           fi
-          test -s LICENSE && test -s THIRD-PARTY-LICENSES.txt
+          test -s LICENSE
+          for n in 'python-holidays 0.107' 'nepali-datetime 1.0.8.5' 'Phosphor Icons'; do grep -qF "$n" THIRD-PARTY-LICENSES.txt; done
           ./date-calc --version
+          ./date-calc between 2026-02-01 2026-02-28 -c CN --json | grep -F '"business_days":16,'
+          ./date-calc convert 2026-10-27 --json | grep -F '"text":"10 Kartik 2083 BS"'
       - name: Copy the files with wrong checksums
         run: mkdir bad && cp dist/* bad/ && sed -i.bak 's/^./x/' bad/SHA256SUMS
       - name: install.sh with sh, bash and zsh
@@ -132,11 +135,18 @@ jobs:
           }
           # A new shell finds it through the user PATH alone.
           powershell -NoProfile -Command '$env:Path = [Environment]::GetEnvironmentVariable(''Path'', ''User''); date-calc --version'
+          # An upgrade works while the page runs, and a later one clears the moved copy.
+          $p = Start-Process "$dir\date-calc.exe" 'ui --no-open' -PassThru -WindowStyle Hidden
+          Start-Sleep 1
+          if ($p.HasExited) { throw 'date-calc ui stopped' }
+          powershell -NoProfile -File dist/install.ps1
+          if ($LASTEXITCODE) { throw 'upgrade failed while date-calc ui ran' }
+          Stop-Process $p.Id; $p.WaitForExit()
           # Other files in the folder stay.
           Set-Content "$dir\notes.old" 'kept'
           powershell -NoProfile -File dist/install.ps1
-          $files = (Get-ChildItem $dir -Name) -join ','
-          if ($LASTEXITCODE -or $files -ne 'date-calc.exe,notes.old') { throw "left $files" }
+          $files = Get-ChildItem $dir -Name
+          if ($LASTEXITCODE -or (Compare-Object $files 'date-calc.exe', 'notes.old')) { throw "left $files" }
           Remove-Item "$dir\notes.old"
           # An upgrade from an archive without date-calc.exe, or with one that doesn't run,
           # fails and keeps the installed one.
