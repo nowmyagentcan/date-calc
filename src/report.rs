@@ -461,7 +461,10 @@ fn listing(
             }
             (jiff::civil::date(y, 1, 1), jiff::civil::date(y, 12, 31))
         }
-        (None, Some(from), Some(to)) => (input::date(from)?, input::date(to)?),
+        (None, Some(from), Some(to)) => {
+            let (from, to) = (input::date(from)?, input::date(to)?);
+            (from.min(to), from.max(to))
+        }
         _ => {
             return Err(Error::new("usage", "Give both --from and --to, or a YEAR."));
         }

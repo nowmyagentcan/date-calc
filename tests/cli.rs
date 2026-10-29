@@ -1317,12 +1317,19 @@ fn keeps_zoned_times_inside_year_one() {
 }
 
 #[test]
-#[ignore = "known bug: T02"]
-fn does_not_answer_a_backwards_holiday_range_with_nothing() {
-    let args = "holidays DE --from 2026-12-31 --to 2026-01-01";
-    let (code, v) = json(&args.split(' ').collect::<Vec<_>>());
-    let empty = v["holidays"].as_array().is_some_and(|h| h.is_empty());
-    assert!(code != 0 || !empty, "{v}");
+fn reads_a_backwards_holiday_range_in_order() {
+    let mut v = answer(&[
+        "holidays",
+        "DE",
+        "--from",
+        "2026-12-31",
+        "--to",
+        "2026-01-01",
+    ]);
+    let mut want = answer(&["holidays", "DE", "2026"]);
+    v["data"].take();
+    want["data"].take();
+    assert_eq!(v, want);
 }
 
 #[test]
