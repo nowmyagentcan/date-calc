@@ -17,7 +17,7 @@ pub struct Country {
     /// The last year with one-off holidays or workday swaps, for countries that announce them most years.
     pub decree_through: Option<i16>,
     pub region_count: usize,
-    /// The national weekend at the start of the data years.
+    /// The national weekend from its latest change on.
     pub weekend: u8,
 }
 
@@ -127,12 +127,16 @@ fn ymd(s: &str) -> Date {
 }
 
 impl Country {
-    /// Reads the country line, the region lines after it and the first weekend line.
+    /// Reads the country line, the region lines after it and the national weekend lines.
     fn parse(block: &'static str) -> Self {
         let mut lines = block.lines();
         let f: Vec<_> = lines.next().unwrap().split('\t').collect();
         let region_count = lines.by_ref().take_while(|l| l.starts_with("R\t")).count();
-        let first_weekend = block.lines().nth(region_count + 1).unwrap();
+        let weekend = block.lines().skip(region_count + 1);
+        let weekend = weekend
+            .take_while(|l| l.starts_with("W\t*\t"))
+            .last()
+            .unwrap();
         Self {
             code: f[0],
             name: f[1],
@@ -140,7 +144,7 @@ impl Country {
             years: (f[3].parse().unwrap(), f[4].parse().unwrap()),
             decree_through: f[5].parse().ok(),
             region_count,
-            weekend: weekend_days(first_weekend.split('\t').nth(3).unwrap()),
+            weekend: weekend_days(weekend.split('\t').nth(3).unwrap()),
         }
     }
 }
@@ -390,7 +394,7 @@ mod tests {
             (17, SAT_SUN, (2000, 2050))
         );
         let ae = all.iter().find(|c| c.code == "AE").unwrap();
-        assert_eq!((ae.region_count, ae.weekend), (0, FRI_SAT));
+        assert_eq!((ae.region_count, ae.weekend), (0, SAT_SUN));
         assert_eq!(ae.aliases, ["ARE"]);
         let gb = all.iter().find(|c| c.code == "GB").unwrap();
         assert_eq!(gb.aliases, ["GBR", "UK"]);

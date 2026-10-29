@@ -580,7 +580,7 @@ pub struct CountryInfo {
     pub name: &'static str,
     pub aliases: Vec<&'static str>,
     pub region_count: usize,
-    /// The national weekend at the start of the data years.
+    /// The national weekend in force since its latest change; weekend_history has the dates.
     pub weekend: Vec<&'static str>,
     pub years: [i16; 2],
     pub decree_through: Option<i16>,

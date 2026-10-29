@@ -529,7 +529,10 @@ fn lists_countries_and_one_country() {
     assert_eq!((regions.len(), &v["region_count"]), (17, &json!(17)));
     assert!(regions.contains(&json!({"code": "BY", "names": ["Bayern"]})));
     assert!(regions.contains(&json!({"code": "Augsburg", "names": []})));
+    let sa = countries.iter().find(|c| c["code"] == "SA").unwrap();
+    assert_eq!(sa["weekend"], json!(["FRI", "SAT"]));
     let v = answer(&["countries", "united arab emirates"]);
+    assert_eq!(v["weekend"], json!(["SAT", "SUN"]));
     assert_eq!(
         v["weekend_history"],
         json!([
