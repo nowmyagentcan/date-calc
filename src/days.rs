@@ -318,17 +318,19 @@ pub fn add(
     if business && amount != 0 || roll != Roll::None {
         place.has_business_days()?;
     }
-    let (from, result, passed) = if business {
+    let (mut skipped, mut skipped_more) = (vec![], 0);
+    let (from, result) = if business {
         place.covers(start)?;
-        let (mut d, mut left, mut passed) = (start, amount.unsigned_abs(), vec![]);
+        let (mut d, mut left) = (start, amount.unsigned_abs());
         while left > 0 {
             d = place.step(d, amount > 0)?;
             match place.day(d) {
                 Day::Business => left -= 1,
-                day => passed.push((d, day)),
+                day if skipped.len() < SKIPPED_MAX => skipped.push((d, day)),
+                _ => skipped_more += 1,
             }
         }
-        (start, d, passed)
+        (start, d)
     } else {
         let span = match unit {
             Unit::Days => amount.days(),
@@ -355,7 +357,7 @@ pub fn add(
                 d = place.step(d, forward)?;
             }
         };
-        match roll {
+        let (from, result, over) = match roll {
             Roll::None => (raw, raw, vec![]),
             Roll::Following => walk(true)?,
             Roll::Preceding => walk(false)?,
@@ -366,7 +368,10 @@ pub fn add(
                     _ => walk(!forward)?,
                 }
             }
-        }
+        };
+        // A roll passes one run of days off: far fewer than SKIPPED_MAX.
+        skipped = over;
+        (from, result)
     };
     let (lo, hi) = (from.min(result), from.max(result));
     let (mut weekend_workdays, mut warnings) = (vec![], vec![]);
@@ -378,9 +383,6 @@ pub fn add(
     if business && amount == 0 {
         warnings.extend(place.start_warning(start));
     }
-    let mut skipped = passed;
-    let skipped_more = skipped.len().saturating_sub(SKIPPED_MAX);
-    skipped.truncate(SKIPPED_MAX);
     Ok(Added {
         start,
         amount,

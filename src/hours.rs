@@ -271,17 +271,14 @@ pub fn add(place: &Place, start: &Moment, amount: i64, windows: &[Window]) -> Re
         start.date().min(result.date()),
         start.date().max(result.date()),
     );
-    let mut skipped: Vec<_> = lo
-        .series(jiff::Span::new().days(1))
-        .take_while(|&d| d <= hi)
-        .filter(|&d| d != lo && d != hi)
-        .filter_map(|d| Some((d, place.day(d))).filter(|p| p.1 != Day::Business))
-        .collect();
-    if !forward {
-        skipped.reverse();
-    }
-    let skipped_more = skipped.len().saturating_sub(SKIPPED_MAX);
-    skipped.truncate(SKIPPED_MAX);
+    let mut passed = start
+        .date()
+        .series(jiff::Span::new().days(if forward { 1 } else { -1 }))
+        .take_while(|&d| d != result.date())
+        .skip(1)
+        .filter_map(|d| Some((d, place.day(d))).filter(|p| p.1 != Day::Business));
+    let skipped: Vec<_> = passed.by_ref().take(SKIPPED_MAX).collect();
+    let skipped_more = passed.count();
     let mut warnings = day_warnings(place, lo, hi, &place.holidays(lo, hi), true);
     if amount == 0 {
         warnings.extend(place.start_warning(start.date()));
@@ -520,7 +517,7 @@ mod tests {
     fn adding_hours_warns_and_fails_like_business_days() {
         let cn = Place::new(Some("CN"), None, None).unwrap();
         let r = plus(&cn, "2026-02-15 10:00", 0.0, "09:00-17:00", None);
-        assert_eq!(r.result, r.start);
+        assert_eq!((&r.result, r.skipped.len()), (&r.start, 0));
         assert_eq!(
             r.warnings,
             [Warning {
