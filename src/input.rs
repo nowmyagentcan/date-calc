@@ -10,15 +10,18 @@ use crate::hours::{DAY, Moment, Window};
 /// Weekday names from Monday, as text output writes them.
 pub const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/// Error `bad_date` for `text`.
+pub fn bad_date(text: &str) -> Error {
+    Error::new("bad_date", format!("Not a date: '{text}'."))
+        .hint("Use YYYY-MM-DD, e.g. 2026-02-01, or today.")
+}
+
 /// `YYYY-MM-DD` with a year from 0001 to 9999, or `today` (the computer's local date).
 pub fn date(text: &str) -> Result<Date, Error> {
     if text.eq_ignore_ascii_case("today") {
         return Ok(jiff::Zoned::now().date());
     }
-    let bad = || {
-        Error::new("bad_date", format!("Not a date: '{text}'."))
-            .hint("Use YYYY-MM-DD, e.g. 2026-02-01, or today.")
-    };
+    let bad = || bad_date(text);
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     let parts: Vec<_> = text.split('-').collect();
     let [y, m, d] = parts[..] else {

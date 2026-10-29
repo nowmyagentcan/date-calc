@@ -328,4 +328,7 @@ fn meets_the_time_targets() {
         let windows = input::hours("09:00-17:00").unwrap();
         drop(hours::between(&place("US"), &start, &end, &windows).unwrap());
     });
+    check("convert 2026-10-27", 15, &|| {
+        drop(date_calc::calendars::convert("2026-10-27", None, None).unwrap())
+    });
 }

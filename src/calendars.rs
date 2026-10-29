@@ -418,14 +418,22 @@ pub struct Converted {
     pub warnings: Vec<Warning>,
 }
 
-/// Shows a Gregorian date in every other calendar, or only in `to`. A calendar whose table
-/// doesn't cover it is left out with a warning, or fails when it is `to`.
-pub fn convert(input: &str, only: Option<Calendar>) -> Result<Converted, Error> {
-    let gregorian = crate::input::date(input)?;
-    let (from, mut warnings) = (Gregorian, vec![]);
+/// Shows a date in every calendar but its own, or only in `only`. A calendar whose table
+/// doesn't cover it is left out with a warning, or fails when it is `only`.
+pub fn convert(
+    input: &str,
+    from: Option<Calendar>,
+    only: Option<Calendar>,
+) -> Result<Converted, Error> {
+    let (from, gregorian) = read(input, from)?;
+    let mut warnings: Vec<_> = Some(from)
+        .filter(|&c| c != Gregorian)
+        .and_then(|c| caution(&in_calendar(c, gregorian).ok()?))
+        .into_iter()
+        .collect();
     let wanted = Calendar::ALL
         .into_iter()
-        .filter(|&c| c != Gregorian && c != from && only.is_none_or(|t| t == c));
+        .filter(|&c| c != Gregorian && only.map_or(c != from, |t| t == c));
     let mut dates = vec![];
     for cal in wanted {
         match in_calendar(cal, gregorian) {
@@ -438,6 +446,13 @@ pub fn convert(input: &str, only: Option<Calendar>) -> Result<Converted, Error> 
         }
     }
     warnings.extend(dates.iter().filter_map(caution));
+    const ORDER: [&str; 3] = [
+        "calendar_out_of_range",
+        "bs_projected",
+        "chinese_calculated",
+    ];
+    warnings.sort_by_key(|w| ORDER.iter().position(|&c| c == w.code));
+    warnings.dedup();
     Ok(Converted {
         input: input.into(),
         from,
@@ -445,6 +460,111 @@ pub fn convert(input: &str, only: Option<Calendar>) -> Result<Converted, Error> 
         dates,
         warnings,
     })
+}
+
+/// Spellings people also use, beside the month names results show.
+const VARIANTS: [(&str, Calendar, u8, bool); 22] = [
+    ("Rabi I", UmmAlQura, 3, false),
+    ("Rabi II", UmmAlQura, 4, false),
+    ("Jumada I", UmmAlQura, 5, false),
+    ("Jumada II", UmmAlQura, 6, false),
+    ("Shaaban", UmmAlQura, 8, false),
+    ("Dhul Qadah", UmmAlQura, 11, false),
+    ("Dhul Hijjah", UmmAlQura, 12, false),
+    ("Heshvan", Hebrew, 2, false),
+    ("Marcheshvan", Hebrew, 2, false),
+    ("Teves", Hebrew, 4, false),
+    ("Shvat", Hebrew, 5, false),
+    ("Adar I", Hebrew, 5, true),
+    ("Adar II", Hebrew, 6, false),
+    ("Baishakh", BikramSambat, 1, false),
+    ("Jeth", BikramSambat, 2, false),
+    ("Asar", BikramSambat, 3, false),
+    ("Saun", BikramSambat, 4, false),
+    ("Bhadau", BikramSambat, 5, false),
+    ("Ashwin", BikramSambat, 6, false),
+    ("Push", BikramSambat, 9, false),
+    ("Fagun", BikramSambat, 11, false),
+    ("Chaitra", BikramSambat, 12, false),
+];
+
+/// A month by name, in any case, ignoring spaces, hyphens and apostrophes: its calendar
+/// (Islamic names give Umm al-Qura), number and whether it is a leap month.
+fn month_by_name(name: &str) -> Option<(Calendar, u8, bool)> {
+    let key = |s: &str| -> String {
+        s.chars()
+            .filter(|c| !matches!(c, ' ' | '-' | '\'' | '\u{2019}'))
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let wanted = key(name);
+    let tables = [
+        (UmmAlQura, &ISLAMIC),
+        (Hebrew, &HEBREW),
+        (Persian, &PERSIAN),
+        (BikramSambat, &BIKRAM_SAMBAT),
+    ];
+    let named = tables
+        .into_iter()
+        .flat_map(|(cal, names)| names.iter().zip(1..).map(move |(&n, m)| (n, cal, m, false)));
+    let (_, cal, month, leap) = named.chain(VARIANTS).find(|v| key(v.0) == wanted)?;
+    Some((cal, month, leap))
+}
+
+/// Digits only, at most `max` of them.
+fn number<T: std::str::FromStr>(text: &str, max: usize) -> Option<T> {
+    let digits = !text.is_empty() && text.len() <= max && text.bytes().all(|b| b.is_ascii_digit());
+    digits.then(|| text.parse().ok())?
+}
+
+/// Reads `D MonthName YYYY` (an optional AH, SH or BS after it; the name picks the calendar,
+/// `from` may only change Umm al-Qura to tabular), or `YYYY-MM-DD` in `from` (Gregorian when
+/// not given) with an `L` after a leap month's number (`5787-05L-01`).
+fn read(input: &str, from: Option<Calendar>) -> Result<(Calendar, Date), Error> {
+    let mut words: Vec<_> = input.split_whitespace().collect();
+    if words.len() > 3
+        && ["ah", "sh", "bs"].contains(&words[words.len() - 1].to_lowercase().as_str())
+    {
+        words.pop();
+    }
+    if let [day, name @ .., year] = &words[..]
+        && let (Some(day), Some(year)) = (number(day, 2), number(year, 4))
+        && let Some((cal, month, leap)) = month_by_name(&name.join(" "))
+    {
+        let cal = match from {
+            None => cal,
+            Some(IslamicCivil) if cal == UmmAlQura => IslamicCivil,
+            Some(f) if f == cal => cal,
+            Some(f) => {
+                let text = format!("{day} {} {year}", month_name(cal, month, leap, false));
+                let name = f.name();
+                return Err(Error::new(
+                    "bad_calendar_date",
+                    format!("There is no {text} in the {name} calendar."),
+                ));
+            }
+        };
+        return Ok((cal, to_gregorian(cal, year, month, leap, day)?));
+    }
+    let cal = from.unwrap_or(Gregorian);
+    if cal == Gregorian {
+        return Ok((cal, crate::input::date(input)?));
+    }
+    let bad = || crate::input::bad_date(input);
+    let [year, month, day] = input.split('-').collect::<Vec<_>>()[..] else {
+        return Err(bad());
+    };
+    let (month, leap) = match month.strip_suffix(['L', 'l']) {
+        Some(m) => (m, true),
+        None => (month, false),
+    };
+    let fields = (year.len() == 4, month.len() == 2, day.len() == 2);
+    let (Some(year), Some(month), Some(day), (true, true, true)) =
+        (number(year, 4), number(month, 2), number(day, 2), fields)
+    else {
+        return Err(bad());
+    };
+    Ok((cal, to_gregorian(cal, year, month, leap, day)?))
 }
 
 /// Warnings `bs_projected` and `chinese_calculated` for a date shown or read.
@@ -539,7 +659,7 @@ mod tests {
 
     #[test]
     fn shows_a_date_in_every_calendar() {
-        let r = convert("2026-10-27", None).unwrap();
+        let r = convert("2026-10-27", None, None).unwrap();
         assert_eq!(
             (r.from, r.gregorian, r.input.as_str()),
             (Gregorian, date(2026, 10, 27), "2026-10-27")
@@ -590,13 +710,13 @@ mod tests {
         );
         assert!(r.dates[2..].iter().all(|d| d.note.is_none()));
         assert!(r.warnings.is_empty());
-        let only = convert("2026-10-27", Some(Persian)).unwrap();
+        let only = convert("2026-10-27", None, Some(Persian)).unwrap();
         assert_eq!(
             only.dates,
             [shown(Persian, 1405, 8, 5, "Aban", "5 Aban 1405 SH")]
         );
         assert!(
-            convert("2026-10-27", Some(Gregorian))
+            convert("2026-10-27", None, Some(Gregorian))
                 .unwrap()
                 .dates
                 .is_empty()
@@ -690,7 +810,7 @@ mod tests {
 
     #[test]
     fn leaves_out_calendars_whose_tables_end() {
-        let r = convert("1882-11-11", None).unwrap();
+        let r = convert("1882-11-11", None, None).unwrap();
         let left: Vec<_> = r.dates.iter().map(|d| d.calendar).collect();
         assert_eq!(left, [IslamicCivil, Hebrew, Chinese, Persian]);
         let messages: Vec<_> = r
@@ -715,12 +835,12 @@ mod tests {
                 ),
             ]
         );
-        let e = convert("1882-11-11", Some(UmmAlQura)).unwrap_err();
+        let e = convert("1882-11-11", None, Some(UmmAlQura)).unwrap_err();
         assert_eq!(e.code, "calendar_out_of_range");
-        assert!(convert("1882-11-12", Some(UmmAlQura)).is_ok());
-        assert!(convert("2174-11-25", Some(UmmAlQura)).is_ok());
-        assert!(convert("2174-11-26", Some(UmmAlQura)).is_err());
-        let r = convert("2027-04-14", None).unwrap();
+        assert!(convert("1882-11-12", None, Some(UmmAlQura)).is_ok());
+        assert!(convert("2174-11-25", None, Some(UmmAlQura)).is_ok());
+        assert!(convert("2174-11-26", None, Some(UmmAlQura)).is_err());
+        let r = convert("2027-04-14", None, None).unwrap();
         let w = (r.warnings[0].code, r.warnings[0].message.as_str());
         assert_eq!(
             w,
@@ -729,9 +849,124 @@ mod tests {
                 "Bikram Sambat dates after 2083 BS come from a projected table; Nepal publishes each year's official calendar about a year ahead."
             )
         );
-        assert!(convert("2027-04-13", None).unwrap().warnings.is_empty());
-        assert!(convert("0001-01-01", None).is_ok());
-        assert!(convert("9999-12-31", None).is_ok());
+        assert!(
+            convert("2027-04-13", None, None)
+                .unwrap()
+                .warnings
+                .is_empty()
+        );
+        assert!(convert("0001-01-01", None, None).is_ok());
+        assert!(convert("9999-12-31", None, None).is_ok());
+    }
+
+    fn read_as(input: &str, from: Option<Calendar>) -> (Calendar, Date) {
+        let r = convert(input, from, None).unwrap();
+        assert!(r.dates.iter().all(|d| d.calendar != r.from), "{input}");
+        (r.from, r.gregorian)
+    }
+
+    #[test]
+    fn reads_dates_by_number_or_month_name() {
+        let june16 = (UmmAlQura, date(2026, 6, 16));
+        assert_eq!(read_as("1 Muharram 1448", None), june16);
+        assert_eq!(read_as("1448-01-01", Some(UmmAlQura)), june16);
+        assert_eq!(
+            read_as("1 Ramadan 1447", None),
+            (UmmAlQura, date(2026, 2, 18))
+        );
+        assert_eq!(read_as("1 Tishrei 5787", None), (Hebrew, date(2026, 9, 12)));
+        let adar1 = (Hebrew, date(2027, 2, 8));
+        assert_eq!(read_as("5787-05L-01", Some(Hebrew)), adar1);
+        assert_eq!(read_as("1 Adar I 5787", None), adar1);
+        // Plain Adar in a leap year is Adar II.
+        assert_eq!(read_as("1 Adar 5787", None), (Hebrew, date(2027, 3, 10)));
+        assert_eq!(
+            read_as("2026-01-01", Some(Chinese)),
+            (Chinese, date(2026, 2, 17))
+        );
+        assert_eq!(
+            read_as("2025-06l-01", Some(Chinese)),
+            (Chinese, date(2025, 7, 25))
+        );
+        assert_eq!(
+            read_as("1405-01-01", Some(Persian)),
+            (Persian, date(2026, 3, 21))
+        );
+        assert_eq!(
+            read_as("1 Farvardin 1405 SH", None),
+            (Persian, date(2026, 3, 21))
+        );
+        let bs = (BikramSambat, date(2026, 4, 14));
+        assert_eq!(read_as("2083-01-01", Some(BikramSambat)), bs);
+        assert_eq!(
+            read_as("10 Kartik 2083", None),
+            (BikramSambat, date(2026, 10, 27))
+        );
+        assert_eq!(
+            read_as("2026-10-27", Some(Gregorian)),
+            (Gregorian, date(2026, 10, 27))
+        );
+        let r = convert("2084-01-01", Some(BikramSambat), None).unwrap();
+        assert_eq!(r.gregorian, date(2027, 4, 14));
+        let codes: Vec<_> = r.warnings.iter().map(|w| w.code).collect();
+        assert_eq!(codes, ["bs_projected"]);
+        let r = convert("1899-01-01", Some(Chinese), Some(Chinese)).unwrap();
+        assert_eq!(r.dates.len(), 1);
+        assert_eq!(r.warnings.len(), 1);
+        assert_eq!(r.warnings[0].code, "chinese_calculated");
+    }
+
+    #[test]
+    fn reads_month_name_spellings() {
+        // 2026-10-27 is 16 Jumada al-Ula in Umm al-Qura and 15 in the tabular calendar.
+        let tabular = (IslamicCivil, date(2026, 10, 28));
+        assert_eq!(
+            read_as("16 Jumada al-Ula 1448", Some(IslamicCivil)),
+            tabular
+        );
+        for (input, expected) in [
+            (
+                "16 jumada al-ula 1448 ah",
+                read_as("16 Jumada al-Ula 1448", None),
+            ),
+            ("1 Rabi I 1448", read_as("1 Rabi al-Awwal 1448", None)),
+            ("1 Jumada II 1448", read_as("1 Jumada al-Akhira 1448", None)),
+            ("1 Dhul Hijjah 1447", read_as("1 Dhu al-Hijja 1447", None)),
+            ("1 Shaaban 1447", read_as("1 Shaban 1447", None)),
+            ("1 Marcheshvan 5787", read_as("1 Cheshvan 5787", None)),
+            ("1 Adar II 5787", read_as("1 Adar 5787", None)),
+            ("1 Baishakh 2083 BS", read_as("1 Baisakh 2083", None)),
+            ("1 Chaitra 2082", read_as("1 Chait 2082", None)),
+            ("1 dhul-qadah 1447", read_as("1 Dhu al-Qada 1447", None)),
+        ] {
+            assert_eq!(read_as(input, None), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn rejects_dates_that_dont_read() {
+        let fail = |input, from| convert(input, from, None).unwrap_err();
+        let e = fail("30 Safar 1447", None);
+        assert_eq!(e.code, "bad_calendar_date");
+        assert_eq!(e.hint.as_deref(), Some("Safar 1447 has 29 days."));
+        assert_eq!(fail("5786-05L-01", Some(Hebrew)).code, "bad_calendar_date");
+        assert_eq!(
+            fail("1 Ramadan 1448", Some(Hebrew)).message,
+            "There is no 1 Ramadan 1448 in the Hebrew calendar."
+        );
+        for (input, from) in [
+            ("1 Foo 1448", None),
+            ("2083-1-01", Some(BikramSambat)),
+            ("today", Some(BikramSambat)),
+            ("2083-01-01-01", Some(Persian)),
+            ("123 Ramadan 1448", None),
+        ] {
+            let e = fail(input, from);
+            assert_eq!(e.code, "bad_date", "{input}");
+            assert_eq!(e.message, format!("Not a date: '{input}'."));
+        }
+        assert_eq!(fail("1 Muharram 1700", None).code, "calendar_out_of_range");
+        assert_eq!(fail("1 Baisakh 2101", None).code, "calendar_out_of_range");
     }
 
     #[test]
