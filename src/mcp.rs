@@ -124,14 +124,16 @@ struct ConvertArgs {
     to: Option<String>,
 }
 
-const CALENDARS: [&str; 7] = [
-    "gregorian",
-    "islamic-umalqura",
-    "islamic-civil",
-    "hebrew",
-    "chinese",
-    "persian",
-    "bikram-sambat",
+/// The calendar names, and null, which the nullable `from` and `to` also take.
+const CALENDARS: [Option<&str>; 8] = [
+    Some("gregorian"),
+    Some("islamic-umalqura"),
+    Some("islamic-civil"),
+    Some("hebrew"),
+    Some("chinese"),
+    Some("persian"),
+    Some("bikram-sambat"),
+    None,
 ];
 
 #[derive(Deserialize, JsonSchema)]

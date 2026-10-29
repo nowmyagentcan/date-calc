@@ -155,7 +155,12 @@ fn check_tools(list: &Value) {
     assert_eq!(between["include_start"]["default"], true);
     let convert = &tool("convert_date")["inputSchema"]["properties"];
     assert_eq!(convert["from"]["default"], "gregorian");
-    assert_eq!(convert["to"]["enum"].as_array().unwrap().len(), 7);
+    for field in ["from", "to"] {
+        // A nullable field's enum lists null too, or schema validators refuse null.
+        assert_eq!(convert[field]["type"], json!(["string", "null"]));
+        let names = convert[field]["enum"].as_array().unwrap();
+        assert_eq!((names.len(), names.last()), (8, Some(&Value::Null)));
+    }
     let between = &tool("business_days_between")["outputSchema"];
     assert!(
         between["required"]
