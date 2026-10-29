@@ -1327,8 +1327,7 @@ fn historical_offsets_keep_dates_and_weekdays_in_step() {
         }
         let result = v["result"].as_str().unwrap();
         let day: jiff::civil::Date = result[..10].parse().expect(result);
-        let days = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
-        let weekday = days[day.weekday().to_monday_zero_offset() as usize];
+        let weekday = day.strftime("%a").to_string().to_uppercase();
         assert_eq!(v["weekday"], weekday, "{result}");
     }
 }
@@ -1336,14 +1335,8 @@ fn historical_offsets_keep_dates_and_weekdays_in_step() {
 #[test]
 #[ignore = "known bug: R2-02"]
 fn warns_of_estimated_dates_among_regional_holidays() {
-    let v = answer(&[
-        "holidays",
-        "IN",
-        "--from",
-        "2026-01-17",
-        "--to",
-        "2026-01-17",
-    ]);
+    let args = "holidays IN --from 2026-01-17 --to 2026-01-17";
+    let v = answer(&args.split(' ').collect::<Vec<_>>());
     assert_eq!(v["regional"][0]["estimated"], true, "{v}");
     assert!(codes(&v).contains(&"estimated_dates"), "{v}");
 }
