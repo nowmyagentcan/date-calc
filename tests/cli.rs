@@ -326,3 +326,214 @@ fn turns_away_bad_usage_with_exit_2() {
         assert_eq!((code, out.as_str()), (2, ""), "{args:?}");
     }
 }
+
+#[test]
+fn lists_holidays_by_country_and_region() {
+    let v = answer(&["holidays", "CN", "2026"]);
+    assert_eq!(v["holidays"].as_array().unwrap().len(), 22);
+    let workdays = [
+        "2026-01-04",
+        "2026-02-14",
+        "2026-02-28",
+        "2026-05-09",
+        "2026-09-20",
+        "2026-10-10",
+    ];
+    assert_eq!(v["weekend_workdays"], json!(workdays));
+    let v = answer(&["holidays", "DE", "2026"]);
+    assert_eq!(
+        (v["holidays"].as_array().unwrap().len(), &v["region"]),
+        (9, &json!(null))
+    );
+    assert_eq!(
+        v["holidays"][0],
+        json!({"date": "2026-01-01", "weekday": "THU", "name": "New Year's Day", "observed": false, "estimated": false, "scope": "national"})
+    );
+    assert_eq!(
+        v["regional"][0],
+        json!({"date": "2026-01-06", "weekday": "TUE", "name": "Epiphany", "observed": false, "estimated": false, "regions": ["Augsburg", "BW", "BY", "ST"]})
+    );
+    assert_eq!(
+        (&v["from"], &v["to"]),
+        (&json!("2026-01-01"), &json!("2026-12-31"))
+    );
+    for args in [
+        &["holidays", "DE", "2026", "-r", "BY"][..],
+        &["holidays", "DE-BY", "2026"],
+    ] {
+        let v = answer(args);
+        let regional = v["holidays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|h| h["scope"] == "regional");
+        let names: Vec<_> = regional.map(|h| h["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["Epiphany", "Corpus Christi", "All Saints' Day"]);
+        assert_eq!(v["holidays"].as_array().unwrap().len(), 12);
+        assert_eq!(
+            (&v["region"], &v["regional"]),
+            (&json!({"code": "BY", "name": "Bayern"}), &json!([]))
+        );
+    }
+    let eid = |v: &Value| -> Vec<bool> {
+        let fitr = v["holidays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|h| h["name"].as_str().unwrap().starts_with("Eid al-Fitr"));
+        fitr.map(|h| h["estimated"].as_bool().unwrap()).collect()
+    };
+    let v = answer(&["holidays", "SA", "2026"]);
+    assert!(!eid(&v).is_empty() && !eid(&v).contains(&true), "{v}");
+    let v = answer(&["holidays", "AE", "2026"]);
+    assert!(!eid(&v).is_empty() && !eid(&v).contains(&false), "{v}");
+    assert_eq!(codes(&v), ["schedule_not_announced", "estimated_dates"]);
+    let v = answer(&[
+        "holidays",
+        "US",
+        "--from",
+        "2026-07-01",
+        "--to",
+        "2026-07-31",
+    ]);
+    let flags: Vec<_> = v["holidays"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| (&h["date"], &h["observed"]))
+        .collect();
+    assert_eq!(
+        flags,
+        [
+            (&json!("2026-07-03"), &json!(true)),
+            (&json!("2026-07-04"), &json!(false))
+        ]
+    );
+    let (code, v) = json(&[
+        "holidays",
+        "DE",
+        "2026",
+        "--from",
+        "2026-01-01",
+        "--to",
+        "2026-02-01",
+    ]);
+    assert_eq!(
+        (code, &v["error"]["message"]),
+        (2, &json!("Give both --from and --to, or a YEAR."))
+    );
+}
+
+#[test]
+fn converts_dates_as_documented() {
+    let v = answer(&["convert", "2026-10-27"]);
+    let note_uq = "Saudi Arabia's official Umm al-Qura calendar. Religious dates set by moon sighting can differ by a day, and more in other countries.";
+    let note_tab = "Tabular Islamic calendar (Friday epoch, 30-year cycle); usually 0-2 days from Umm al-Qura.";
+    let want = json!({
+        "input": "2026-10-27", "from": "gregorian",
+        "gregorian": {"date": "2026-10-27", "weekday": "TUE", "iso_week": "2026-W44", "day_of_year": 300},
+        "dates": [
+            {"calendar": "islamic-umalqura", "year": 1448, "month": 5, "leap_month": false, "month_name": "Jumada al-Ula", "day": 16, "text": "16 Jumada al-Ula 1448 AH", "note": note_uq},
+            {"calendar": "islamic-civil", "year": 1448, "month": 5, "leap_month": false, "month_name": "Jumada al-Ula", "day": 15, "text": "15 Jumada al-Ula 1448 AH", "note": note_tab},
+            {"calendar": "hebrew", "year": 5787, "month": 2, "leap_month": false, "month_name": "Cheshvan", "day": 16, "text": "16 Cheshvan 5787", "note": null},
+            {"calendar": "chinese", "year": 2026, "month": 9, "leap_month": false, "month_name": "Month 9", "day": 18, "text": "Month 9, day 18, year of the Horse (Bing-Wu)", "cyclic_year": "Bing-Wu", "zodiac": "Horse", "note": null},
+            {"calendar": "persian", "year": 1405, "month": 8, "leap_month": false, "month_name": "Aban", "day": 5, "text": "5 Aban 1405 SH", "note": null},
+            {"calendar": "bikram-sambat", "year": 2083, "month": 7, "leap_month": false, "month_name": "Kartik", "day": 10, "text": "10 Kartik 2083 BS", "note": null},
+        ],
+        "warnings": [],
+        "data": data(),
+    });
+    assert_eq!(v, want);
+    for (args, gregorian, warnings) in [
+        ("1 Muharram 1448", "2026-06-16", ""),
+        ("1448-01-01 --from islamic-umalqura", "2026-06-16", ""),
+        ("1 Ramadan 1447", "2026-02-18", ""),
+        ("1 Tishrei 5787", "2026-09-12", ""),
+        ("5787-05L-01 --from hebrew", "2027-02-08", ""),
+        ("1 Adar I 5787", "2027-02-08", ""),
+        ("2026-01-01 --from chinese", "2026-02-17", ""),
+        ("2025-06L-01 --from chinese", "2025-07-25", ""),
+        ("1405-01-01 --from persian", "2026-03-21", ""),
+        ("2083-01-01 --from bs", "2026-04-14", ""),
+        ("10 Kartik 2083", "2026-10-27", ""),
+        ("2084-01-01 --from bs", "2027-04-14", "bs_projected"),
+        (
+            "1882-11-11",
+            "1882-11-11",
+            "calendar_out_of_range calendar_out_of_range chinese_calculated",
+        ),
+    ] {
+        let args: Vec<_> = ["convert"].into_iter().chain(args.split(' ')).collect();
+        let v = answer(&args);
+        assert_eq!(v["gregorian"]["date"], gregorian, "{args:?}");
+        assert_eq!(codes(&v).join(" "), warnings, "{args:?}");
+    }
+    let v = answer(&["convert", "1882-11-11"]);
+    assert!(
+        v["dates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|d| d["calendar"] != "islamic-umalqura")
+    );
+    let v = answer(&["convert", "2026-10-27", "--to", "persian"]);
+    assert_eq!(v["dates"].as_array().unwrap().len(), 1);
+    for (args, code, hint) in [
+        (
+            "5786-05L-01 --from hebrew",
+            "bad_calendar_date",
+            json!(null),
+        ),
+        (
+            "30 Safar 1447",
+            "bad_calendar_date",
+            json!("Safar 1447 has 29 days."),
+        ),
+        (
+            "1882-11-11 --to islamic-umalqura",
+            "calendar_out_of_range",
+            json!(null),
+        ),
+        (
+            "2026-10-27 --to julian",
+            "unknown_calendar",
+            json!(
+                "Use gregorian, islamic-umalqura, islamic-civil, hebrew, chinese, persian or bikram-sambat."
+            ),
+        ),
+    ] {
+        let args: Vec<_> = ["convert"].into_iter().chain(args.split(' ')).collect();
+        let (status, v) = json(&args);
+        assert_eq!(
+            (status, &v["error"]["code"], &v["error"]["hint"]),
+            (1, &json!(code), &hint),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
+fn lists_countries_and_one_country() {
+    let v = answer(&["countries"]);
+    let countries = v["countries"].as_array().unwrap();
+    assert_eq!(countries.len(), 250);
+    let cn = countries.iter().find(|c| c["code"] == "CN").unwrap();
+    assert_eq!(
+        cn,
+        &json!({"code": "CN", "name": "China", "aliases": ["CHN"], "region_count": 0, "weekend": ["SAT", "SUN"], "years": [2000, 2050], "decree_through": 2026})
+    );
+    assert_eq!(v["data"], data());
+    let v = answer(&["countries", "DE"]);
+    let regions = v["regions"].as_array().unwrap();
+    assert_eq!((regions.len(), &v["region_count"]), (17, &json!(17)));
+    assert!(regions.contains(&json!({"code": "BY", "names": ["Bayern"]})));
+    assert!(regions.contains(&json!({"code": "Augsburg", "names": []})));
+    let v = answer(&["countries", "united arab emirates"]);
+    assert_eq!(
+        v["weekend_history"],
+        json!([
+            {"from": "2000-01-01", "weekend": ["FRI", "SAT"], "region": null},
+            {"from": "2022-01-01", "weekend": ["SAT", "SUN"], "region": null},
+        ])
+    );
+}

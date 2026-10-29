@@ -24,7 +24,11 @@ const EXAMPLES: &str = "\x1b[1;4mExamples:\x1b[0m
   date-calc between today 2026-12-31 -c DE-BY --exclude-start
   date-calc add 2026-11-02 10 -c US
   date-calc add 2026-01-31 1 -u months --roll modified-following -c GB-ENG
-  date-calc hours \"2026-11-02 10:00\" \"2026-11-05 15:00\" -c DE --hours 09:00-12:00,13:00-17:00";
+  date-calc hours \"2026-11-02 10:00\" \"2026-11-05 15:00\" -c DE --hours 09:00-12:00,13:00-17:00
+  date-calc holidays JP 2027
+  date-calc convert 2026-10-27
+  date-calc convert 1 Ramadan 1448
+  date-calc countries DE";
 
 #[derive(Parser)]
 #[command(
@@ -91,6 +95,49 @@ enum Command {
         place: Place,
         #[command(flatten)]
         clock: Clock,
+        #[command(flatten)]
+        out: Out,
+    },
+    /// List a country's public holidays
+    #[command(after_help = EXAMPLES)]
+    Holidays {
+        /// Country: ISO code, name, or CC-REGION like DE-BY
+        country: String,
+        /// Year [default: the current year]
+        #[arg(value_parser = clap::value_parser!(i16).range(1..=9999))]
+        year: Option<i16>,
+        /// First date of a range, with --to
+        #[arg(long, value_name = "D")]
+        from: Option<String>,
+        /// Last date of a range, with --from
+        #[arg(long, value_name = "D")]
+        to: Option<String>,
+        /// Region of the country, e.g. BY [default: the whole country]
+        #[arg(short, long, value_name = "R")]
+        region: Option<String>,
+        #[command(flatten)]
+        out: Out,
+    },
+    /// Show a date in other calendars
+    #[command(after_help = EXAMPLES)]
+    Convert {
+        /// YYYY-MM-DD (with --from, that calendar's month number; L marks a leap month), or D MonthName YYYY
+        #[arg(required = true)]
+        date: Vec<String>,
+        /// Calendar of the date: gregorian, islamic-umalqura, islamic-civil, hebrew, chinese, persian, bikram-sambat [default: gregorian]
+        #[arg(long, value_name = "CAL")]
+        from: Option<String>,
+        /// Show only this calendar [default: all]
+        #[arg(long, value_name = "CAL")]
+        to: Option<String>,
+        #[command(flatten)]
+        out: Out,
+    },
+    /// List countries, their regions and weekends
+    #[command(after_help = EXAMPLES)]
+    Countries {
+        /// One country, with its regions and weekend history
+        country: Option<String>,
         #[command(flatten)]
         out: Out,
     },
@@ -215,6 +262,30 @@ impl Command {
             } => {
                 set(place, Some(clock));
                 (Op::Hours { start, end }, out.json)
+            }
+            Command::Holidays {
+                country,
+                year,
+                from,
+                to,
+                region,
+                out,
+            } => {
+                (o.country, o.region) = (Some(country), region);
+                (Op::Holidays { year, from, to }, out.json)
+            }
+            Command::Convert {
+                date,
+                from,
+                to,
+                out,
+            } => {
+                let date = date.join(" ");
+                (Op::Convert { date, from, to }, out.json)
+            }
+            Command::Countries { country, out } => {
+                o.country = country;
+                (Op::Countries, out.json)
             }
         };
         (op, o, json)

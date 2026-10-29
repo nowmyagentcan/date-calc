@@ -4,6 +4,7 @@ use jiff::civil::Date;
 use serde::Serialize;
 use serde_json::Number;
 
+use crate::calendars::{self, CalDate, Calendar};
 use crate::data;
 use crate::days::{self, Day, Entry, Place, Roll, Warning};
 use crate::error::Error;
@@ -48,6 +49,19 @@ pub enum Op {
         unit: Unit,
         roll: Roll,
     },
+    /// A year, a range, or neither for the current year; the country comes from the options.
+    Holidays {
+        year: Option<i16>,
+        from: Option<String>,
+        to: Option<String>,
+    },
+    Convert {
+        date: String,
+        from: Option<String>,
+        to: Option<String>,
+    },
+    /// Every country, or the one in the options with its regions.
+    Countries,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,6 +70,10 @@ pub enum Answer {
     Between(Between),
     Add(Added),
     Hours(Hours),
+    Holidays(Holidays),
+    Convert(Converted),
+    Countries(Countries),
+    Country(Country),
 }
 
 impl Answer {
@@ -65,6 +83,9 @@ impl Answer {
             Answer::Between(_) => "between",
             Answer::Add(_) => "add",
             Answer::Hours(_) => "hours",
+            Answer::Holidays(_) => "holidays",
+            Answer::Convert(_) => "convert",
+            Answer::Countries(_) | Answer::Country(_) => "countries",
         }
     }
 }
@@ -102,6 +123,15 @@ pub struct Holiday {
     pub name: &'static str,
     pub observed: bool,
     pub estimated: bool,
+    /// Listings only: `national` or `regional`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<&'static str>,
+    /// Regions that don't keep this national holiday.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub except_regions: Vec<&'static str>,
+    /// For a holiday only some regions keep: those regions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -208,6 +238,9 @@ fn holiday(e: &Entry) -> Holiday {
         name: e.name,
         observed: e.observed,
         estimated: e.estimated,
+        scope: None,
+        except_regions: vec![],
+        regions: vec![],
     }
 }
 
@@ -265,6 +298,19 @@ pub fn run(op: &Op, o: &Options) -> Result<Answer, Error> {
             unit,
             roll,
         } => add(start, amount, *unit, *roll, o).map(Answer::Add),
+        Op::Holidays { year, from, to } => {
+            listing(*year, from.as_deref(), to.as_deref(), o).map(Answer::Holidays)
+        }
+        Op::Convert { date, from, to } => {
+            convert(date, from.as_deref(), to.as_deref()).map(Answer::Convert)
+        }
+        Op::Countries => match &o.country {
+            None => Ok(Answer::Countries(Countries {
+                countries: data::countries().map(|c| info(&c)).collect(),
+                data: data(),
+            })),
+            Some(c) => country(c).map(Answer::Country),
+        },
     }
 }
 
@@ -367,6 +413,195 @@ fn add(start: &str, amount: &str, unit: Unit, roll: Roll, o: &Options) -> Result
         weekend_workdays: r.weekend_workdays,
         weekend: weekend(r.weekend),
         warnings: r.warnings,
+        data: data(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct Holidays {
+    pub country: Named,
+    pub region: Option<Named>,
+    pub from: Date,
+    pub to: Date,
+    /// National holidays, or everything the region keeps.
+    pub holidays: Vec<Holiday>,
+    /// Holidays only some regions keep; empty with a region.
+    pub regional: Vec<Holiday>,
+    pub weekend_workdays: Vec<Date>,
+    pub weekend: Vec<&'static str>,
+    pub warnings: Vec<Warning>,
+    pub data: Data,
+}
+
+fn listing(
+    year: Option<i16>,
+    from: Option<&str>,
+    to: Option<&str>,
+    o: &Options,
+) -> Result<Holidays, Error> {
+    let (from, to) = match (year, from, to) {
+        (_, None, None) => {
+            let y = year.unwrap_or_else(|| jiff::Zoned::now().year());
+            (jiff::civil::date(y, 1, 1), jiff::civil::date(y, 12, 31))
+        }
+        (None, Some(from), Some(to)) => (input::date(from)?, input::date(to)?),
+        _ => {
+            return Err(Error::new("usage", "Give both --from and --to, or a YEAR."));
+        }
+    };
+    let place = Place::new(o.country.as_deref(), o.region.as_deref(), None)?;
+    let r = days::holidays(&place, from, to)?;
+    let (country, region) = named(&place);
+    let listed = |l: &days::Listed| Holiday {
+        scope: Some(l.scope),
+        except_regions: l.except_regions.clone(),
+        ..holiday(&l.entry)
+    };
+    let grouped = |g: &days::Grouped| Holiday {
+        regions: g.regions.clone(),
+        ..holiday(&g.entry)
+    };
+    Ok(Holidays {
+        country: country.expect("a listing has a country"),
+        region,
+        from,
+        to,
+        holidays: r.holidays.iter().map(listed).collect(),
+        regional: r.regional.iter().map(grouped).collect(),
+        weekend_workdays: r.weekend_workdays,
+        weekend: weekend(r.weekend),
+        warnings: r.warnings,
+        data: data(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct Gregorian {
+    pub date: Date,
+    pub weekday: &'static str,
+    pub iso_week: String,
+    pub day_of_year: i16,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CalendarDate {
+    pub calendar: &'static str,
+    pub year: i32,
+    pub month: u8,
+    pub leap_month: bool,
+    pub month_name: String,
+    pub day: u8,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cyclic_year: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zodiac: Option<&'static str>,
+    pub note: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Converted {
+    pub input: String,
+    pub from: &'static str,
+    pub gregorian: Gregorian,
+    pub dates: Vec<CalendarDate>,
+    pub warnings: Vec<Warning>,
+    pub data: Data,
+}
+
+fn convert(date: &str, from: Option<&str>, to: Option<&str>) -> Result<Converted, Error> {
+    let from = from.map(Calendar::parse).transpose()?;
+    let to = to.map(Calendar::parse).transpose()?;
+    let c = calendars::convert(date, from, to)?;
+    let g = c.gregorian;
+    let week = g.iso_week_date();
+    let shown = |d: CalDate| {
+        let (cyclic_year, zodiac) = d.cycle.unzip();
+        CalendarDate {
+            calendar: d.calendar.id(),
+            year: d.year,
+            month: d.month,
+            leap_month: d.leap_month,
+            month_name: d.month_name,
+            day: d.day,
+            text: d.text,
+            cyclic_year,
+            zodiac,
+            note: d.note,
+        }
+    };
+    Ok(Converted {
+        input: c.input,
+        from: c.from.id(),
+        gregorian: Gregorian {
+            date: g,
+            weekday: weekday(g),
+            iso_week: format!("{:04}-W{:02}", week.year(), week.week()),
+            day_of_year: g.day_of_year(),
+        },
+        dates: c.dates.into_iter().map(shown).collect(),
+        warnings: c.warnings,
+        data: data(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct CountryInfo {
+    pub code: &'static str,
+    pub name: &'static str,
+    pub aliases: Vec<&'static str>,
+    pub region_count: usize,
+    /// The national weekend at the start of the data years.
+    pub weekend: Vec<&'static str>,
+    pub years: [i16; 2],
+    pub decree_through: Option<i16>,
+}
+
+fn info(c: &data::Country) -> CountryInfo {
+    CountryInfo {
+        code: c.code,
+        name: c.name,
+        aliases: c.aliases.clone(),
+        region_count: c.region_count,
+        weekend: weekend(c.weekend),
+        years: [c.years.0, c.years.1],
+        decree_through: c.decree_through,
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Countries {
+    pub countries: Vec<CountryInfo>,
+    pub data: Data,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WeekendChange {
+    pub from: Date,
+    pub weekend: Vec<&'static str>,
+    pub region: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Country {
+    #[serde(flatten)]
+    pub country: CountryInfo,
+    pub regions: Vec<data::Region>,
+    pub weekend_history: Vec<WeekendChange>,
+    pub data: Data,
+}
+
+fn country(text: &str) -> Result<Country, Error> {
+    let (b, _) = data::find(text, None)?;
+    let change = |w: &data::Weekend| WeekendChange {
+        from: w.from,
+        weekend: weekend(w.days),
+        region: w.region.map(|r| b.regions[r].code),
+    };
+    Ok(Country {
+        country: info(&b.country),
+        weekend_history: b.weekends.iter().map(change).collect(),
+        regions: b.regions,
         data: data(),
     })
 }
