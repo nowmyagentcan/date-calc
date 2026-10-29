@@ -456,7 +456,7 @@ const VARIANTS: [(&str, Calendar, u8, bool); 22] = [
 
 /// A month by name, in any case, ignoring spaces, hyphens and apostrophes: its calendar
 /// (Islamic names give Umm al-Qura), number and whether it is a leap month.
-fn month_by_name(name: &str) -> Option<(Calendar, u8, bool)> {
+pub(crate) fn month_by_name(name: &str) -> Option<(Calendar, u8, bool)> {
     let key = |s: &str| -> String {
         s.chars()
             .filter(|c| !matches!(c, ' ' | '-' | '\'' | '\u{2019}'))
