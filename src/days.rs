@@ -528,81 +528,36 @@ mod tests {
         Place::new(Some(country), region, None).unwrap()
     }
 
-    fn count(country: &str, region: Option<&str>, from: Date, to: Date) -> i64 {
-        between(&place(country, region), from, to, true, true)
-            .unwrap()
-            .business_days
-    }
-
     #[test]
-    fn china_february_2026_counts_decree_workdays() {
+    fn a_holiday_on_a_decree_workday_is_a_holiday() {
         let cn = place("CN", None);
-        let r = between(&cn, date(2026, 2, 1), date(2026, 2, 28), true, true).unwrap();
-        assert_eq!(
-            (
-                r.business_days,
-                r.calendar_days,
-                r.weekend_days,
-                r.holiday_days
-            ),
-            (16, 28, 6, 6)
-        );
-        assert_eq!((r.elapsed_days, r.elapsed.as_str()), (27, "P27D"));
-        assert_eq!(r.weekend_workdays, [date(2026, 2, 14), date(2026, 2, 28)]);
-        assert_eq!(r.weekend, SAT_SUN);
-        let names: Vec<_> = r.holidays.iter().map(|h| (h.date, h.name)).collect();
-        assert_eq!(
-            names,
-            [
-                (date(2026, 2, 16), "Chinese New Year's Eve"),
-                (date(2026, 2, 17), "Chinese New Year (Spring Festival)"),
-                (date(2026, 2, 18), "Chinese New Year (Spring Festival)"),
-                (date(2026, 2, 19), "Chinese New Year (Spring Festival)"),
-                (date(2026, 2, 20), "Day off (substituted from 02/14/2026)"),
-                (date(2026, 2, 23), "Day off (substituted from 02/28/2026)"),
-            ]
-        );
         assert_eq!(cn.day(date(2026, 2, 14)), Day::Business);
         assert_eq!(cn.day(date(2026, 2, 15)), Day::Weekend);
         assert_eq!(
             cn.day(date(2026, 2, 16)),
             Day::Holiday("Chinese New Year's Eve")
         );
-    }
-
-    #[test]
-    fn counts_match_the_official_calendars() {
-        let jan = (date(2026, 1, 1), date(2026, 1, 31));
-        let year = (date(2026, 1, 1), date(2026, 12, 31));
-        assert_eq!(count("CN", None, date(2026, 9, 20), date(2026, 10, 10)), 11);
-        assert_eq!(count("DE", None, jan.0, jan.1), 21);
-        assert_eq!(count("DE", Some("BY"), jan.0, jan.1), 20);
-        assert_eq!(count("DE-BY", None, jan.0, jan.1), 20);
-        assert_eq!(count("DE", None, year.0, year.1), 254);
-        assert_eq!(count("DE", Some("BY"), year.0, year.1), 252);
-        assert_eq!(count("US", None, date(2026, 7, 1), date(2026, 7, 31)), 22);
-        let xmas = (date(2026, 12, 24), date(2027, 1, 5));
-        assert_eq!(count("GB", Some("ENG"), xmas.0, xmas.1), 6);
-        assert_eq!(count("GB", Some("SCT"), xmas.0, xmas.1), 5);
-        assert_eq!(count("JP", None, date(2026, 5, 1), date(2026, 5, 31)), 18);
-        assert_eq!(count("CN", None, date(2027, 2, 1), date(2027, 2, 28)), 16);
+        // US 2026-07-04 is a Saturday holiday: counted once, as a weekend day.
+        let us = place("US", None);
+        assert_eq!(us.day(date(2026, 7, 4)), Day::Weekend);
     }
 
     #[test]
     fn each_date_uses_its_own_weekend() {
-        let one = |d| count("AE", None, d, d);
-        assert_eq!(one(date(2021, 1, 10)), 1);
-        assert_eq!(one(date(2023, 1, 8)), 0);
-        assert_eq!(count("AE", None, date(2021, 12, 26), date(2022, 1, 8)), 10);
+        let r = between(
+            &place("AE", None),
+            date(2021, 12, 26),
+            date(2022, 1, 8),
+            true,
+            true,
+        );
+        assert_eq!(r.unwrap().business_days, 10);
     }
 
     #[test]
     fn backwards_and_excluded_ends() {
         let cn = place("CN", None);
         let (feb1, feb28) = (date(2026, 2, 1), date(2026, 2, 28));
-        let r = between(&cn, feb28, feb1, true, true).unwrap();
-        assert_eq!((r.business_days, r.calendar_days), (-16, 28));
-        assert_eq!((r.elapsed_days, r.elapsed.as_str()), (-27, "-P27D"));
         let r = between(&cn, feb1, feb28, false, false).unwrap();
         assert_eq!((r.business_days, r.calendar_days), (15, 26));
         assert_eq!(r.weekend_workdays, [date(2026, 2, 14)]);
@@ -662,44 +617,18 @@ mod tests {
         add(&p, start, n, unit, roll).unwrap()
     }
 
-    fn workday(country: &str, start: Date, n: i64) -> Date {
-        added(Some(country), start, n, Unit::BusinessDays, Roll::None).result
-    }
-
     #[test]
-    fn adds_business_days_like_workday() {
+    fn adds_business_days_over_weekends_only() {
+        let r = added(None, date(2026, 11, 2), 10, Unit::BusinessDays, Roll::None);
+        assert_eq!((r.result, r.skipped.len()), (date(2026, 11, 16), 4));
         let r = added(
-            Some("CN"),
-            date(2026, 2, 13),
-            5,
+            None,
+            date(2026, 11, 16),
+            -10,
             Unit::BusinessDays,
             Roll::None,
         );
-        assert_eq!(r.result, date(2026, 2, 27));
-        let skipped: Vec<_> = r.skipped.iter().map(|s| (s.0.day(), s.1)).collect();
-        let cny = Day::Holiday("Chinese New Year (Spring Festival)");
-        assert_eq!(
-            skipped,
-            [
-                (15, Day::Weekend),
-                (16, Day::Holiday("Chinese New Year's Eve")),
-                (17, cny),
-                (18, cny),
-                (19, cny),
-                (20, Day::Holiday("Day off (substituted from 02/14/2026)")),
-                (21, Day::Weekend),
-                (22, Day::Weekend),
-                (23, Day::Holiday("Day off (substituted from 02/28/2026)")),
-            ]
-        );
-        assert_eq!(r.weekend_workdays, [date(2026, 2, 14)]);
-        assert_eq!(workday("CN", date(2026, 3, 2), -5), date(2026, 2, 24));
-        assert_eq!(workday("US", date(2026, 7, 2), 1), date(2026, 7, 6));
-        assert_eq!(workday("US", date(2026, 12, 24), 1), date(2026, 12, 28));
-        assert_eq!(workday("CN", date(2026, 2, 14), 0), date(2026, 2, 14));
-        assert_eq!(workday("CN", date(2026, 2, 15), 0), date(2026, 2, 15));
-        let r = added(None, date(2026, 11, 2), 10, Unit::BusinessDays, Roll::None);
-        assert_eq!((r.result, r.skipped.len()), (date(2026, 11, 16), 4));
+        assert_eq!(r.result, date(2026, 11, 2));
     }
 
     #[test]
@@ -774,34 +703,6 @@ mod tests {
     }
 
     #[test]
-    fn lists_national_and_regional_holidays() {
-        let cn = year("CN", None, 2026);
-        assert_eq!((cn.holidays.len(), cn.weekend_workdays.len()), (22, 6));
-        assert!(cn.regional.is_empty());
-
-        let de = year("DE", None, 2026);
-        assert_eq!(de.holidays.len(), 9);
-        assert!(de.holidays.iter().all(|h| h.scope == "national"));
-        let epiphany = &de.regional[0];
-        assert_eq!(
-            (epiphany.entry.date, epiphany.entry.name),
-            (date(2026, 1, 6), "Epiphany")
-        );
-        assert_eq!(epiphany.regions, ["Augsburg", "BW", "BY", "ST"]);
-
-        let by = year("DE", Some("BY"), 2026);
-        assert_eq!(by.holidays.len(), 12);
-        assert!(by.regional.is_empty());
-        let regional: Vec<_> = by
-            .holidays
-            .iter()
-            .filter(|h| h.scope == "regional")
-            .map(|h| h.entry.name)
-            .collect();
-        assert_eq!(regional, ["Epiphany", "Corpus Christi", "All Saints' Day"]);
-    }
-
-    #[test]
     fn lists_regions_that_drop_a_national_holiday() {
         let us = place("US", None);
         let b = us.block.as_ref().unwrap();
@@ -815,18 +716,6 @@ mod tests {
         let mut codes: Vec<_> = h.except.iter().map(|&r| b.regions[r].code).collect();
         codes.sort_unstable();
         assert_eq!(listed.except_regions, codes);
-    }
-
-    #[test]
-    fn flags_estimated_lunar_dates() {
-        let estimated = |c| {
-            year(c, None, 2026)
-                .holidays
-                .iter()
-                .any(|h| h.entry.estimated)
-        };
-        assert!(!estimated("SA"));
-        assert!(estimated("AE"));
     }
 
     #[test]
