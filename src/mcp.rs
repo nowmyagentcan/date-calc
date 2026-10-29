@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use rmcp::handler::server::tool::schema_for_input;
 use rmcp::model::{CallToolResult, ContentBlock, JsonObject};
 use rmcp::service::ServerInitializeError;
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
-use schemars::JsonSchema;
 use schemars::generate::SchemaSettings;
+use schemars::transform::RecursiveTransform;
+use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Number, Value};
@@ -274,15 +274,21 @@ impl Server {
 )]
 impl ServerHandler for Server {}
 
-fn input<T: JsonSchema + 'static>() -> Arc<JsonObject> {
-    schema_for_input::<T>().expect("tool arguments are objects")
+fn input<T: JsonSchema>() -> Arc<JsonObject> {
+    schema::<T>(SchemaSettings::draft2020_12())
 }
 
-/// The schema of an answer as serialized, so fields left out when empty aren't required, with
-/// an object at its root, as 2025-11-25 clients require.
+/// The schema of an answer as serialized, so fields left out when empty aren't required.
 fn output<T: JsonSchema>() -> Arc<JsonObject> {
-    let schema = SchemaSettings::draft2020_12()
-        .for_serialize()
+    schema::<T>(SchemaSettings::draft2020_12().for_serialize())
+}
+
+/// A tool's schema with an object at its root, as 2025-11-25 clients require, and without the
+/// Rust number formats schemars adds (uint8, int16), which JSON Schema doesn't define.
+fn schema<T: JsonSchema>(settings: SchemaSettings) -> Arc<JsonObject> {
+    let no_format = |s: &mut Schema| drop(s.remove("format"));
+    let schema = settings
+        .with_transform(RecursiveTransform(no_format))
         .into_generator()
         .into_root_schema_for::<T>();
     let Value::Object(mut schema) = schema.to_value() else {

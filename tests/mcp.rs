@@ -63,6 +63,8 @@ fn check_tools(list: &Value) {
     let tools = list["result"]["tools"].as_array().unwrap();
     let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap();
     assert_eq!(tools.len(), 6);
+    // Rust's number formats (uint8, int16) aren't JSON Schema's, and clients warn about them.
+    assert!(!list.to_string().contains("\"format\":"), "{list}");
     let place = ["country", "region", "weekend"];
     let clock = ["hours", "timezone"];
     for (name, description, required, properties) in [
