@@ -311,7 +311,7 @@ fn call<T: DeserializeOwned + JsonSchema>(
     args: JsonObject,
     op: impl FnOnce(T, &mut Options) -> Op,
 ) -> CallToolResult {
-    let answer = report::short(args.values().filter_map(Value::as_str))
+    let answer = report::short(args.values().filter_map(Value::as_str).map(str::len))
         .and_then(|()| known::<T>(&args))
         .and_then(|()| {
             serde_json::from_value(Value::Object(args))
