@@ -497,3 +497,115 @@ fn answers_after_server_discover() {
 fn exits_quietly_when_stdin_closes() {
     assert_eq!(session(&[]), (vec![], 0));
 }
+
+/// An initialize request (id 0) and the initialized notification.
+fn handshake() -> Vec<Value> {
+    let client = json!({"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test", "version": "1.0.0"}});
+    let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+    vec![request(0, "initialize", client), initialized]
+}
+
+/// Where `value` breaks `schema`, in the subset of JSON Schema the tools publish: `$ref` into
+/// `$defs`, `anyOf`, `type`, `required`, `properties` and `items`.
+fn misfit(value: &Value, schema: &Value, root: &Value, path: &str) -> Option<String> {
+    if let Some(name) = schema["$ref"].as_str() {
+        let name = name.strip_prefix("#/$defs/").unwrap();
+        return misfit(value, &root["$defs"][name], root, path);
+    }
+    if let Some(any) = schema["anyOf"].as_array() {
+        let fits = any.iter().any(|s| misfit(value, s, root, path).is_none());
+        return (!fits).then(|| format!("{path}: fits no anyOf branch"));
+    }
+    let kind = match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(n) if n.is_f64() => "number",
+        Value::Number(_) => "integer",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    };
+    let types = match &schema["type"] {
+        Value::Array(t) => t.iter().map(|t| t.as_str().unwrap()).collect(),
+        t => t.as_str().into_iter().collect::<Vec<_>>(),
+    };
+    let numeric = kind == "integer" && types.contains(&"number");
+    if !types.is_empty() && !types.contains(&kind) && !numeric {
+        return Some(format!("{path}: {kind}, not {types:?}"));
+    }
+    for key in schema["required"].as_array().into_iter().flatten() {
+        let key = key.as_str().unwrap();
+        if value.get(key).is_none() {
+            return Some(format!("{path}: no {key}"));
+        }
+    }
+    let props = schema["properties"].as_object();
+    let fields = value.as_object().into_iter().flatten();
+    let fields = fields.filter_map(|(k, v)| Some((format!("{path}.{k}"), v, props?.get(k)?)));
+    let items = value.as_array().into_iter().flatten().enumerate();
+    let items = items.map(|(i, v)| (format!("{path}[{i}]"), v, &schema["items"]));
+    fields
+        .chain(items)
+        .find_map(|(p, v, s)| misfit(v, s, root, &p))
+}
+
+#[test]
+#[ignore = "known bug: F02"]
+fn answers_fit_their_output_schemas() {
+    let calls = [
+        (
+            "business_days_between",
+            json!({"start": "2026-02-01", "end": "2026-02-28", "country": "CN"}),
+        ),
+        (
+            "add_to_date",
+            json!({"start": "2026-02-13", "amount": 5, "country": "CN"}),
+        ),
+        (
+            "add_to_date",
+            json!({"start": "2026-11-02", "amount": 1000, "country": "US"}),
+        ),
+        (
+            "add_to_date",
+            json!({"start": "2026-11-02T16:00", "amount": 1.5, "unit": "business_hours"}),
+        ),
+        (
+            "business_hours_between",
+            json!({"start": "2026-12-20T10:00", "end": "2026-12-30T15:00", "country": "DE"}),
+        ),
+        ("list_holidays", json!({"country": "DE", "year": 2026})),
+        (
+            "list_holidays",
+            json!({"country": "DE", "region": "BY", "year": 2026}),
+        ),
+        ("convert_date", json!({"date": "2026-10-27"})),
+        ("list_countries", json!({})),
+        ("list_countries", json!({"country": "DE"})),
+    ];
+    let mut messages = handshake();
+    messages.push(request(1, "tools/list", json!({})));
+    messages.extend(
+        (0..)
+            .zip(&calls)
+            .map(|(i, (tool, args))| call(2 + i, tool, args.clone())),
+    );
+    let (responses, _) = session(&messages);
+    let responses = &responses[1..];
+    let tools = responses[0]["result"]["tools"].as_array().unwrap();
+    for ((tool, args), response) in calls.iter().zip(&responses[1..]) {
+        let schema = &tools.iter().find(|t| t["name"] == *tool).unwrap()["outputSchema"];
+        let answer = &response["result"]["structuredContent"];
+        assert!(answer.is_object(), "{tool} {args}: {response}");
+        assert_eq!(misfit(answer, schema, schema, "$"), None, "{tool} {args}");
+    }
+}
+
+#[test]
+#[ignore = "known bug: F06"]
+fn refuses_a_region_without_a_country() {
+    let args = json!({"start": "2026-01-06", "end": "2026-01-06", "region": "BY"});
+    let mut messages = handshake();
+    messages.push(call(1, "business_days_between", args));
+    let (responses, _) = session(&messages);
+    assert_eq!(responses[1]["result"]["isError"], true, "{}", responses[1]);
+}
