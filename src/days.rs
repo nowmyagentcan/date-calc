@@ -1,4 +1,4 @@
-//! Business days: which dates count, `between` and `add`.
+//! Business days: which dates count, `between`, `add` and holiday listings.
 
 use jiff::civil::Date;
 
@@ -94,6 +94,35 @@ pub struct Added {
 }
 
 const SKIPPED_MAX: usize = 100;
+
+/// A holiday in a listing: `scope` is `national` or `regional`.
+#[derive(Debug, PartialEq)]
+pub struct Listed {
+    pub entry: Entry,
+    pub scope: &'static str,
+    /// Regions that don't keep this national holiday (only when no region is chosen).
+    pub except_regions: Vec<&'static str>,
+}
+
+/// A holiday only some regions keep, with their codes in sorted order.
+#[derive(Debug, PartialEq)]
+pub struct Grouped {
+    pub entry: Entry,
+    pub regions: Vec<&'static str>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Listing {
+    pub from: Date,
+    pub to: Date,
+    /// National holidays, or everything the chosen region keeps.
+    pub holidays: Vec<Listed>,
+    /// Holidays only some regions keep; empty when a region is chosen.
+    pub regional: Vec<Grouped>,
+    pub weekend_workdays: Vec<Date>,
+    /// The weekend in force at `from`.
+    pub weekend: u8,
+}
 
 impl Place {
     /// A country by code, alias or name (`CC-REGION` too), or none for weekends only.
@@ -309,6 +338,58 @@ pub fn add(
         skipped_more,
         weekend_workdays,
         weekend: place.weekend_on(start),
+    })
+}
+
+/// The country's holidays from `from` to `to`, both included. Without a region, holidays only
+/// some regions keep are grouped under `regional`.
+pub fn holidays(place: &Place, from: Date, to: Date) -> Result<Listing, Error> {
+    let b = place.block.as_ref().ok_or_else(|| {
+        Error::new("country_required", "Listing holidays needs a country.")
+            .hint("Pick a country first, e.g. DE.")
+    })?;
+    b.covers(from)?;
+    b.covers(to)?;
+    let codes = |regions: &[usize]| {
+        let mut codes: Vec<_> = regions.iter().map(|&r| b.regions[r].code).collect();
+        codes.sort_unstable();
+        codes
+    };
+    let listed = b.holidays(place.region, from, to).map(|h| Listed {
+        entry: h.into(),
+        scope: if h.region.is_some() {
+            "regional"
+        } else {
+            "national"
+        },
+        except_regions: codes(&h.except),
+    });
+    let mut regional: Vec<(Entry, Vec<usize>)> = vec![];
+    if place.region.is_none() {
+        let start = b.holidays.partition_point(|h| h.date < from);
+        for h in b.holidays[start..].iter().take_while(|h| h.date <= to) {
+            let Some(r) = h.region else { continue };
+            let entry = Entry::from(h);
+            let mut same_day = regional.iter_mut().rev().take_while(|g| g.0.date == h.date);
+            match same_day.find(|g| g.0 == entry) {
+                Some(g) => g.1.push(r),
+                None => regional.push((entry, vec![r])),
+            }
+        }
+    }
+    Ok(Listing {
+        from,
+        to,
+        holidays: listed.collect(),
+        regional: regional
+            .into_iter()
+            .map(|(entry, r)| Grouped {
+                entry,
+                regions: codes(&r),
+            })
+            .collect(),
+        weekend_workdays: place.workdays(from, to),
+        weekend: place.weekend_on(from),
     })
 }
 
@@ -577,5 +658,85 @@ mod tests {
         assert_eq!(e.hint.as_deref(), Some("Change --weekend."));
         assert!(add(&all, date(2026, 1, 5), 0, Unit::BusinessDays, Roll::None).is_ok());
         assert!(add(&all, date(2026, 1, 5), 1, Unit::Days, Roll::None).is_ok());
+    }
+
+    fn year(country: &str, region: Option<&str>, y: i16) -> Listing {
+        holidays(&place(country, region), date(y, 1, 1), date(y, 12, 31)).unwrap()
+    }
+
+    #[test]
+    fn lists_national_and_regional_holidays() {
+        let cn = year("CN", None, 2026);
+        assert_eq!((cn.holidays.len(), cn.weekend_workdays.len()), (22, 6));
+        assert!(cn.regional.is_empty());
+
+        let de = year("DE", None, 2026);
+        assert_eq!(de.holidays.len(), 9);
+        assert!(de.holidays.iter().all(|h| h.scope == "national"));
+        let epiphany = &de.regional[0];
+        assert_eq!(
+            (epiphany.entry.date, epiphany.entry.name),
+            (date(2026, 1, 6), "Epiphany")
+        );
+        assert_eq!(epiphany.regions, ["Augsburg", "BW", "BY", "ST"]);
+
+        let by = year("DE", Some("BY"), 2026);
+        assert_eq!(by.holidays.len(), 12);
+        assert!(by.regional.is_empty());
+        let regional: Vec<_> = by
+            .holidays
+            .iter()
+            .filter(|h| h.scope == "regional")
+            .map(|h| h.entry.name)
+            .collect();
+        assert_eq!(regional, ["Epiphany", "Corpus Christi", "All Saints' Day"]);
+    }
+
+    #[test]
+    fn lists_regions_that_drop_a_national_holiday() {
+        let us = place("US", None);
+        let b = us.block.as_ref().unwrap();
+        let h = b.holidays.iter().find(|h| !h.except.is_empty()).unwrap();
+        let listing = holidays(&us, h.date, h.date).unwrap();
+        let listed = listing
+            .holidays
+            .iter()
+            .find(|l| l.entry.name == h.name)
+            .unwrap();
+        let mut codes: Vec<_> = h.except.iter().map(|&r| b.regions[r].code).collect();
+        codes.sort_unstable();
+        assert_eq!(listed.except_regions, codes);
+    }
+
+    #[test]
+    fn flags_estimated_lunar_dates() {
+        let estimated = |c| {
+            year(c, None, 2026)
+                .holidays
+                .iter()
+                .any(|h| h.entry.estimated)
+        };
+        assert!(!estimated("SA"));
+        assert!(estimated("AE"));
+    }
+
+    #[test]
+    fn listing_needs_a_country_inside_its_data() {
+        let none = Place::new(None, None, None).unwrap();
+        let e = holidays(&none, date(2026, 1, 1), date(2026, 12, 31)).unwrap_err();
+        assert_eq!(
+            (e.code, e.message.as_str(), e.hint.as_deref()),
+            (
+                "country_required",
+                "Listing holidays needs a country.",
+                Some("Pick a country first, e.g. DE.")
+            )
+        );
+        let lk = place("LK", None);
+        let e = holidays(&lk, date(2027, 1, 1), date(2027, 12, 31)).unwrap_err();
+        assert_eq!(
+            e.message,
+            "Holiday data for Sri Lanka covers 2003-2026; 2027-01-01 is outside it."
+        );
     }
 }
