@@ -1,0 +1,11 @@
+[package]
+name = "jiff-tzdb"
+version = "0.1.9"
+authors = ["Andrew Gallant <jamslam@gmail.com>"]
+edition = "2021"
+license = "Unlicense OR MIT"
+description = "jiff-tzdb 0.1.9 regenerated from IANA tzdata 2026f."
+repository = "https://github.com/BurntSushi/jiff"
+
+[lib]
+path = "lib.rs"

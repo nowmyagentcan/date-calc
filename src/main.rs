@@ -1,9 +1,29 @@
 fn main() {
     match std::env::args().nth(1).as_deref() {
-        Some("--version" | "-V") => println!("date-calc {}", env!("CARGO_PKG_VERSION")),
+        Some("--version" | "-V") => println!(
+            "date-calc {} (tzdata {})",
+            env!("CARGO_PKG_VERSION"),
+            jiff_tzdb::VERSION.unwrap_or("unknown")
+        ),
         _ => {
             eprintln!("Usage: date-calc --version");
             std::process::exit(2);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jiff::{civil::date, tz::Offset};
+
+    #[test]
+    fn bundles_tzdata_2026f() {
+        assert_eq!(jiff_tzdb::VERSION, Some("2026f"));
+        // 2026f keeps Cuba on -04 after 2026-11-01; 2026e moved it to -05.
+        let havana = date(2026, 11, 2)
+            .at(0, 0, 0, 0)
+            .in_tz("America/Havana")
+            .unwrap();
+        assert_eq!(havana.offset(), Offset::constant(-4));
     }
 }

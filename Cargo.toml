@@ -7,9 +7,18 @@ description = "Count business days with official public holidays and convert dat
 repository = "https://github.com/nowmyagentcan/date-calc"
 publish = false
 
+[dependencies]
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
+jiff-tzdb = "0.1.9"
+
 [profile.release]
 opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# jiff-tzdb 0.1.9 on crates.io carries tzdata 2026e; this copy is regenerated from 2026f
+# by scripts/vendor-tzdb.sh. Drop the patch once crates.io ships 2026f or newer.
+[patch.crates-io]
+jiff-tzdb = { path = "vendor/jiff-tzdb" }
