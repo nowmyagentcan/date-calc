@@ -1251,15 +1251,16 @@ fn reads_instants_with_fractional_seconds() {
 }
 
 /// Business hours added from `start` count back to the amount between start and result.
-fn hours_round_trip(start: &str, amount: &str, extra: &[&str]) {
-    let a = answer(&[&["add", start, amount, "-u", "bh"], extra].concat());
+fn hours_round_trip(start: &str, amount: &str, extra: &str) {
+    let extra: Vec<_> = extra.split(' ').collect();
+    let a = answer(&[&["add", start, amount, "-u", "bh"], &extra[..]].concat());
     let (from, to) = (a["start"].as_str().unwrap(), a["result"].as_str().unwrap());
     let (from, to) = if amount.starts_with('-') {
         (to, from)
     } else {
         (from, to)
     };
-    let h = answer(&[&["hours", from, to], extra].concat());
+    let h = answer(&[&["hours", from, to], &extra[..]].concat());
     let want = (amount.trim_start_matches('-').parse::<f64>().unwrap() * 3600.0).round();
     assert_eq!(
         h["seconds"], want as i64,
@@ -1269,53 +1270,30 @@ fn hours_round_trip(start: &str, amount: &str, extra: &[&str]) {
 
 #[test]
 fn added_business_hours_count_back_to_the_amount() {
-    let ny = ["--tz", "America/New_York", "--weekend", "none"];
-    let night = ["--hours", "22:00-06:00", "-c", "DE"];
-    let split = ["--hours", "09:00-12:00,13:00-17:00", "-c", "DE"];
+    let ny = "--tz America/New_York --weekend none --hours";
+    let split = "--hours 09:00-12:00,13:00-17:00 -c DE";
     for (start, amount, extra) in [
-        (
-            "2026-03-07T20:00",
-            "13",
-            &[&ny[..], &["--hours", "00:00-24:00"]].concat(),
-        ),
-        (
-            "2026-11-01T00:30",
-            "3",
-            &[&ny[..], &["--hours", "01:00-03:00"]].concat(),
-        ),
-        (
-            "2026-03-08T04:00",
-            "-2.5",
-            &[&ny[..], &["--hours", "01:00-03:30"]].concat(),
-        ),
-        ("2026-12-31T23:00", "9", &night[..].to_vec()),
-        ("2026-11-02 11:30", "7.25", &split[..].to_vec()),
-        ("2026-11-06 16:00", "-40", &split[..].to_vec()),
+        ("2026-03-07T20:00", "13", format!("{ny} 00:00-24:00")),
+        ("2026-11-01T00:30", "3", format!("{ny} 01:00-03:00")),
+        ("2026-03-08T04:00", "-2.5", format!("{ny} 01:00-03:30")),
+        ("2026-12-31T23:00", "9", "--hours 22:00-06:00 -c DE".into()),
+        ("2026-11-02 11:30", "7.25", split.into()),
+        ("2026-11-06 16:00", "-40", split.into()),
         (
             "2026-10-24T18:00",
             "8",
-            &[
-                "--tz",
-                "Europe/Berlin",
-                "--hours",
-                "18:00-02:00,08:00-12:00",
-            ]
-            .to_vec(),
+            "--tz Europe/Berlin --hours 18:00-02:00,08:00-12:00".into(),
         ),
     ] {
-        hours_round_trip(start, amount, extra);
+        hours_round_trip(start, amount, &extra);
     }
 }
 
 #[test]
 #[ignore = "known bug: F04"]
 fn added_business_hours_count_back_across_a_gap_between_windows() {
-    let extra = ["--hours", "01:00-02:30,03:00-04:00", "--weekend", "none"];
-    hours_round_trip(
-        "2026-03-08T01:00",
-        "2.5",
-        &[&extra[..], &["--tz", "America/New_York"]].concat(),
-    );
+    let extra = "--hours 01:00-02:30,03:00-04:00 --weekend none --tz America/New_York";
+    hours_round_trip("2026-03-08T01:00", "2.5", extra);
 }
 
 #[test]
@@ -1333,36 +1311,18 @@ fn overnight_hours_at_the_end_of_the_data_agree_with_add() {
 #[test]
 #[ignore = "known bug: F10"]
 fn keeps_zoned_times_inside_year_one() {
-    let (code, out, _) = run(&[
-        "hours",
-        "0001-01-01T00:00Z",
-        "0001-01-01T01:00Z",
-        "--tz",
-        "America/New_York",
-        "--weekend",
-        "none",
-        "--hours",
-        "00:00-24:00",
-        "--json",
-    ]);
+    let args = "hours 0001-01-01T00:00Z 0001-01-01T01:00Z --tz America/New_York --weekend none --hours 00:00-24:00 --json";
+    let (code, out, _) = run(&args.split(' ').collect::<Vec<_>>());
     assert!(!out.contains("\"0000-"), "{code}: {out}");
 }
 
 #[test]
 #[ignore = "known bug: T02"]
 fn does_not_answer_a_backwards_holiday_range_with_nothing() {
-    let (code, v) = json(&[
-        "holidays",
-        "DE",
-        "--from",
-        "2026-12-31",
-        "--to",
-        "2026-01-01",
-    ]);
-    assert!(
-        code != 0 || !v["holidays"].as_array().unwrap().is_empty(),
-        "{v}"
-    );
+    let args = "holidays DE --from 2026-12-31 --to 2026-01-01";
+    let (code, v) = json(&args.split(' ').collect::<Vec<_>>());
+    let empty = v["holidays"].as_array().is_some_and(|h| h.is_empty());
+    assert!(code != 0 || !empty, "{v}");
 }
 
 #[test]
