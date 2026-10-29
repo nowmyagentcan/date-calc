@@ -27,6 +27,13 @@ pub enum Day {
     Holiday(&'static str),
 }
 
+/// Something the answer depends on that the user may not expect; it doesn't fail the command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Warning {
+    pub code: &'static str,
+    pub message: String,
+}
+
 /// A holiday as results list it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -64,6 +71,7 @@ pub struct Between {
     pub weekend_workdays: Vec<Date>,
     /// The weekend in force at `start`.
     pub weekend: u8,
+    pub warnings: Vec<Warning>,
 }
 
 /// How `add` moves a calendar-unit result that isn't a business day.
@@ -91,6 +99,7 @@ pub struct Added {
     pub weekend_workdays: Vec<Date>,
     /// The weekend in force at `start`.
     pub weekend: u8,
+    pub warnings: Vec<Warning>,
 }
 
 const SKIPPED_MAX: usize = 100;
@@ -122,6 +131,7 @@ pub struct Listing {
     pub weekend_workdays: Vec<Date>,
     /// The weekend in force at `from`.
     pub weekend: u8,
+    pub warnings: Vec<Warning>,
 }
 
 impl Place {
@@ -220,6 +230,7 @@ pub fn between(
     holidays.retain(|h| counted(h.date));
     let mut weekend_workdays = place.workdays(lo, hi);
     weekend_workdays.retain(|&d| counted(d));
+    let warnings = day_warnings(place, lo, hi, &holidays, true);
     Ok(Between {
         start,
         end,
@@ -234,6 +245,7 @@ pub fn between(
         holidays,
         weekend_workdays,
         weekend: place.weekend_on(start),
+        warnings,
     })
 }
 
@@ -320,11 +332,21 @@ pub fn add(
             }
         }
     };
-    let mut weekend_workdays = match business || roll != Roll::None {
-        true => place.workdays(from.min(result), from.max(result)),
-        false => vec![],
-    };
-    weekend_workdays.retain(|&d| !business || d != start);
+    let (lo, hi) = (from.min(result), from.max(result));
+    let (mut weekend_workdays, mut warnings) = (vec![], vec![]);
+    if business || roll != Roll::None {
+        weekend_workdays = place.workdays(lo, hi);
+        weekend_workdays.retain(|&d| !business || d != start);
+        warnings = day_warnings(place, lo, hi, &place.holidays(lo, hi), business);
+    }
+    if business && amount == 0 && place.day(start) != Day::Business {
+        let in_country = match &place.block {
+            Some(b) => format!(" in {}", b.country.name),
+            None => String::new(),
+        };
+        let message = format!("{start} is not a business day{in_country}.");
+        warnings.extend(warning("start_not_business_day", message));
+    }
     let mut skipped = passed;
     let skipped_more = skipped.len().saturating_sub(SKIPPED_MAX);
     skipped.truncate(SKIPPED_MAX);
@@ -338,6 +360,7 @@ pub fn add(
         skipped_more,
         weekend_workdays,
         weekend: place.weekend_on(start),
+        warnings,
     })
 }
 
@@ -350,47 +373,133 @@ pub fn holidays(place: &Place, from: Date, to: Date) -> Result<Listing, Error> {
     })?;
     b.covers(from)?;
     b.covers(to)?;
-    let codes = |regions: &[usize]| {
-        let mut codes: Vec<_> = regions.iter().map(|&r| b.regions[r].code).collect();
-        codes.sort_unstable();
-        codes
-    };
-    let listed = b.holidays(place.region, from, to).map(|h| Listed {
-        entry: h.into(),
-        scope: if h.region.is_some() {
-            "regional"
-        } else {
-            "national"
-        },
-        except_regions: codes(&h.except),
-    });
-    let mut regional: Vec<(Entry, Vec<usize>)> = vec![];
-    if place.region.is_none() {
-        let start = b.holidays.partition_point(|h| h.date < from);
-        for h in b.holidays[start..].iter().take_while(|h| h.date <= to) {
-            let Some(r) = h.region else { continue };
-            let entry = Entry::from(h);
-            let mut same_day = regional.iter_mut().rev().take_while(|g| g.0.date == h.date);
-            match same_day.find(|g| g.0 == entry) {
-                Some(g) => g.1.push(r),
-                None => regional.push((entry, vec![r])),
-            }
-        }
-    }
+    let holidays: Vec<_> = b
+        .holidays(place.region, from, to)
+        .map(|h| Listed {
+            entry: h.into(),
+            scope: if h.region.is_some() {
+                "regional"
+            } else {
+                "national"
+            },
+            except_regions: codes(b, &h.except),
+        })
+        .collect();
+    let entries: Vec<_> = holidays.iter().map(|h| h.entry.clone()).collect();
+    let warnings = [schedule(place, to), estimated(&entries)];
     Ok(Listing {
         from,
         to,
-        holidays: listed.collect(),
-        regional: regional
-            .into_iter()
-            .map(|(entry, r)| Grouped {
-                entry,
-                regions: codes(&r),
-            })
-            .collect(),
+        holidays,
+        regional: match place.region {
+            None => regional(b, from, to),
+            Some(_) => vec![],
+        },
         weekend_workdays: place.workdays(from, to),
         weekend: place.weekend_on(from),
+        warnings: warnings.into_iter().flatten().collect(),
     })
+}
+
+fn codes(b: &Block, regions: &[usize]) -> Vec<&'static str> {
+    let mut codes: Vec<_> = regions.iter().map(|&r| b.regions[r].code).collect();
+    codes.sort_unstable();
+    codes
+}
+
+/// Holidays only some regions keep, one entry per date and name.
+fn regional(b: &Block, from: Date, to: Date) -> Vec<Grouped> {
+    let mut groups: Vec<(Entry, Vec<usize>)> = vec![];
+    let start = b.holidays.partition_point(|h| h.date < from);
+    for h in b.holidays[start..].iter().take_while(|h| h.date <= to) {
+        let Some(r) = h.region else { continue };
+        let entry = Entry::from(h);
+        let mut same_day = groups.iter_mut().rev().take_while(|g| g.0.date == h.date);
+        match same_day.find(|g| g.0 == entry) {
+            Some(g) => g.1.push(r),
+            None => groups.push((entry, vec![r])),
+        }
+    }
+    let group = |(entry, r): (Entry, Vec<usize>)| Grouped {
+        entry,
+        regions: codes(b, &r),
+    };
+    groups.into_iter().map(group).collect()
+}
+
+/// Up to 3 items joined by commas.
+fn first3(items: impl Iterator<Item = String>) -> String {
+    items.take(3).collect::<Vec<_>>().join(", ")
+}
+
+fn warning(code: &'static str, message: String) -> Option<Warning> {
+    Some(Warning { code, message })
+}
+
+/// The warnings for counting business days from `from` to `to` with `holidays` in range.
+fn day_warnings(
+    place: &Place,
+    from: Date,
+    to: Date,
+    holidays: &[Entry],
+    counts_business_days: bool,
+) -> Vec<Warning> {
+    let Some(b) = &place.block else {
+        let days = crate::input::weekend_text(place.weekend_on(from));
+        let message = format!("No country given, so only weekends ({days}) are skipped.");
+        return warning("no_country", message)
+            .filter(|_| counts_business_days)
+            .into_iter()
+            .collect();
+    };
+    let differ = Some(regional(b, from, to))
+        .filter(|g| place.region.is_none() && !g.is_empty())
+        .and_then(|g| {
+            let items = g.iter().map(|g| {
+                let (e, regions) = (&g.entry, g.regions.join(", "));
+                format!("{} {} ({regions})", e.name, e.date)
+            });
+            let message = format!(
+                "{} has regional holidays in this range ({}); this uses national holidays only. Add --region, e.g. {}.",
+                b.country.name,
+                first3(items),
+                b.regions[0].code
+            );
+            warning("regions_differ", message)
+        });
+    let worked = Some(place.workdays(from, to))
+        .filter(|w| place.weekend.is_some() && !w.is_empty())
+        .and_then(|w| {
+            let message = format!(
+                "Weekend days worked by decree still count as business days: {}.",
+                first3(w.iter().map(Date::to_string))
+            );
+            warning("weekend_override", message)
+        });
+    [differ, schedule(place, to), estimated(holidays), worked]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+fn schedule(place: &Place, to: Date) -> Option<Warning> {
+    let b = place.block.as_ref()?;
+    let through = b.country.decree_through.filter(|&y| to.year() > y)?;
+    let message = format!(
+        "{} announces one-off holidays or workday swaps most years; the bundled data has them through {through}. Later dates follow the regular rules and may change.",
+        b.country.name
+    );
+    warning("schedule_not_announced", message)
+}
+
+fn estimated(holidays: &[Entry]) -> Option<Warning> {
+    let mut estimates = holidays.iter().filter(|h| h.estimated).peekable();
+    estimates.peek()?;
+    let message = format!(
+        "Some holiday dates are estimates (lunar calendar): {}. The official date can differ by a day.",
+        first3(estimates.map(|h| format!("{} {}", h.name, h.date)))
+    );
+    warning("estimated_dates", message)
 }
 
 fn iso_duration(start: Date, end: Date) -> String {
@@ -738,5 +847,128 @@ mod tests {
             e.message,
             "Holiday data for Sri Lanka covers 2003-2026; 2027-01-01 is outside it."
         );
+    }
+
+    fn codes_of(warnings: &[Warning]) -> Vec<&'static str> {
+        warnings.iter().map(|w| w.code).collect()
+    }
+
+    #[test]
+    fn warns_without_a_country() {
+        let none = Place::new(None, None, None).unwrap();
+        let r = between(&none, date(2026, 11, 2), date(2026, 11, 6), true, true).unwrap();
+        assert_eq!(
+            r.warnings,
+            [Warning {
+                code: "no_country",
+                message: "No country given, so only weekends (Sat, Sun) are skipped.".into()
+            }]
+        );
+        let fri = Place::new(None, None, Some(0b001_0000)).unwrap();
+        let r = add(&fri, date(2026, 11, 2), 3, Unit::BusinessDays, Roll::None).unwrap();
+        assert_eq!(
+            r.warnings[0].message,
+            "No country given, so only weekends (Fri) are skipped."
+        );
+        let r = add(&none, date(2026, 11, 2), 3, Unit::Days, Roll::Following).unwrap();
+        assert!(r.warnings.is_empty());
+    }
+
+    #[test]
+    fn warns_when_regions_differ() {
+        let de = place("DE", None);
+        let r = between(&de, date(2026, 1, 1), date(2026, 1, 31), true, true).unwrap();
+        assert_eq!(
+            r.warnings,
+            [Warning {
+                code: "regions_differ",
+                message: "Germany has regional holidays in this range (Epiphany 2026-01-06 (Augsburg, BW, BY, ST)); this uses national holidays only. Add --region, e.g. BB.".into()
+            }]
+        );
+        let r = between(&de, date(2026, 1, 1), date(2026, 12, 31), true, true).unwrap();
+        assert!(r.warnings[0].message.contains(
+            "(Epiphany 2026-01-06 (Augsburg, BW, BY, ST), Women's Day 2026-03-08 (BE, MV), Easter Sunday 2026-04-05 (BB));"
+        ));
+        let by = place("DE", Some("BY"));
+        let r = between(&by, date(2026, 1, 1), date(2026, 1, 31), true, true).unwrap();
+        assert!(r.warnings.is_empty());
+        let r = between(&de, date(2026, 2, 2), date(2026, 2, 27), true, true).unwrap();
+        assert!(r.warnings.is_empty());
+        assert!(year("DE", None, 2026).warnings.is_empty());
+    }
+
+    #[test]
+    fn warns_about_unannounced_schedules() {
+        let cn = place("CN", None);
+        let r = between(&cn, date(2027, 2, 1), date(2027, 2, 28), true, true).unwrap();
+        assert_eq!(
+            r.warnings,
+            [Warning {
+                code: "schedule_not_announced",
+                message: "China announces one-off holidays or workday swaps most years; the bundled data has them through 2026. Later dates follow the regular rules and may change.".into()
+            }]
+        );
+        let r = add(&cn, date(2026, 12, 30), 3, Unit::BusinessDays, Roll::None).unwrap();
+        assert_eq!(codes_of(&r.warnings), ["schedule_not_announced"]);
+        assert_eq!(
+            codes_of(&year("CN", None, 2027).warnings),
+            ["schedule_not_announced"]
+        );
+        assert!(year("CN", None, 2026).warnings.is_empty());
+    }
+
+    #[test]
+    fn warns_about_estimated_dates() {
+        let ae = year("AE", None, 2026);
+        let w = ae.warnings.iter().find(|w| w.code == "estimated_dates");
+        assert_eq!(
+            w.unwrap().message,
+            "Some holiday dates are estimates (lunar calendar): Eid al-Fitr 2026-03-20, Eid al-Fitr Holiday 2026-03-21, Eid al-Fitr Holiday 2026-03-22. The official date can differ by a day."
+        );
+        assert!(year("SA", None, 2026).warnings.is_empty());
+    }
+
+    #[test]
+    fn warns_when_a_weekend_override_meets_decree_workdays() {
+        let cn = Place::new(Some("CN"), None, Some(0b110_0000)).unwrap();
+        let r = between(&cn, date(2026, 2, 1), date(2026, 2, 28), true, true).unwrap();
+        assert_eq!(r.business_days, 16);
+        assert_eq!(
+            r.warnings,
+            [Warning {
+                code: "weekend_override",
+                message: "Weekend days worked by decree still count as business days: 2026-02-14, 2026-02-28.".into()
+            }]
+        );
+        let r = between(&cn, date(2026, 3, 1), date(2026, 3, 31), true, true).unwrap();
+        assert!(r.warnings.is_empty());
+    }
+
+    #[test]
+    fn warns_when_adding_nothing_to_a_day_off() {
+        let r = added(
+            Some("CN"),
+            date(2026, 2, 15),
+            0,
+            Unit::BusinessDays,
+            Roll::None,
+        );
+        assert_eq!(
+            r.warnings,
+            [Warning {
+                code: "start_not_business_day",
+                message: "2026-02-15 is not a business day in China.".into()
+            }]
+        );
+        let r = added(
+            Some("CN"),
+            date(2026, 2, 14),
+            0,
+            Unit::BusinessDays,
+            Roll::None,
+        );
+        assert!(r.warnings.is_empty());
+        let r = added(None, date(2026, 2, 15), 0, Unit::BusinessDays, Roll::None);
+        assert_eq!(r.warnings[1].message, "2026-02-15 is not a business day.");
     }
 }
