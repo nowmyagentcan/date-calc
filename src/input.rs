@@ -1,6 +1,8 @@
 //! Reading the values people type: dates, date-times, weekends, working hours and amounts.
 
 use jiff::civil::{Date, Time};
+use jiff::tz::{Offset, TimeZone};
+use jiff::{SignedDuration, Timestamp};
 
 use crate::error::Error;
 use crate::hours::{DAY, Moment, Window};
@@ -46,32 +48,70 @@ fn clock(text: &str, seconds: bool) -> Option<i32> {
     valid.then(|| n[0] * 3600 + n[1] * 60 + n.get(2).unwrap_or(&0))
 }
 
-/// A date (meaning 00:00), `YYYY-MM-DDTHH:MM[:SS]` with `T` or a space, or `now`, as clock time.
-pub fn datetime(text: &str) -> Result<Moment, Error> {
+/// An IANA time zone name in the bundled tzdata, in any case, or `UTC`.
+pub fn timezone(text: &str) -> Result<TimeZone, Error> {
+    jiff::tz::db().get(text).map_err(|_| {
+        Error::new("unknown_timezone", format!("Unknown time zone: '{text}'."))
+            .hint("Use an IANA name such as Europe/Berlin or America/New_York.")
+    })
+}
+
+/// A date (meaning 00:00), `YYYY-MM-DDTHH:MM[:SS]` with `T` or a space, optionally ending in
+/// `Z` or an offset, or `now`. Without `zone` it is clock time and an offset is an error; with
+/// `zone`, clock times are in it and instants are moved into it.
+pub fn datetime(text: &str, zone: Option<&TimeZone>) -> Result<Moment, Error> {
     let bad = || {
         Error::new("bad_datetime", format!("Not a date and time: '{text}'.")).hint(
             "Use YYYY-MM-DDTHH:MM, e.g. 2026-11-02T09:30, optionally with Z or an offset, or now.",
         )
     };
+    let outside = || {
+        Error::new(
+            "date_out_of_range",
+            format!("{text} is outside 0001-01-01 to 9999-12-31."),
+        )
+    };
     if text.eq_ignore_ascii_case("now") {
-        let now = jiff::Zoned::now().datetime();
-        return Ok(Moment::Civil(
-            now.with().subsec_nanosecond(0).build().unwrap(),
-        ));
+        let now = Timestamp::from_second(Timestamp::now().as_second()).unwrap();
+        return Ok(match zone {
+            Some(tz) => Moment::Zoned(now.to_zoned(tz.clone())),
+            None => Moment::Civil(now.to_zoned(TimeZone::system()).datetime()),
+        });
     }
     let (day, time) = match text.get(10..11) {
-        Some("T" | "t" | " ") => (&text[..10], Some(&text[11..])),
-        _ => (text, None),
+        Some("T" | "t" | " ") => (&text[..10], &text[11..]),
+        _ => (text, "00:00"),
     };
     let day = date(day).map_err(|e| if e.code == "bad_date" { bad() } else { e })?;
-    let at = match time {
-        None => 0,
-        Some(time) => clock(time, true).ok_or_else(bad)?,
+    let (time, offset) = match time.find(['Z', 'z', '+', '-']) {
+        Some(i) => (&time[..i], Some(&time[i..])),
+        None => (time, None),
     };
-    let midnight = day.to_datetime(Time::midnight());
-    Ok(Moment::Civil(
-        midnight + jiff::SignedDuration::from_secs(at.into()),
-    ))
+    let at = clock(time, true).ok_or_else(bad)?;
+    let civil = day.to_datetime(Time::midnight()) + SignedDuration::from_secs(at.into());
+    let offset = match offset {
+        None => None,
+        Some("Z" | "z") => Some(Offset::UTC),
+        Some(o) => {
+            let sign = if o.starts_with('-') { -1 } else { 1 };
+            let seconds = clock(&o[1..], false).ok_or_else(bad)?;
+            Some(Offset::from_seconds(sign * seconds).map_err(|_| bad())?)
+        }
+    };
+    let instant = match (offset, zone) {
+        (None, None) => return Ok(Moment::Civil(civil)),
+        (Some(_), None) => {
+            return Err(Error::new(
+                "tz_required",
+                format!("{text} has a UTC offset, so the business's time zone is needed."),
+            )
+            .hint("Add --tz, e.g. --tz Europe/Berlin, or give local times without an offset."));
+        }
+        (None, Some(tz)) => civil.to_zoned(tz.clone()).map(|z| z.timestamp()),
+        (Some(offset), Some(_)) => offset.to_timestamp(civil),
+    };
+    let tz = zone.unwrap().clone();
+    Ok(Moment::Zoned(instant.map_err(|_| outside())?.to_zoned(tz)))
 }
 
 /// Working hours: `HH:MM-HH:MM` windows separated by commas, `24:00` allowed as an end; a window
@@ -276,7 +316,7 @@ mod tests {
 
     #[test]
     fn reads_clock_date_times() {
-        let civil = |text| match datetime(text) {
+        let civil = |text| match datetime(text, None) {
             Ok(Moment::Civil(dt)) => dt,
             other => panic!("{text}: {other:?}"),
         };
@@ -297,7 +337,7 @@ mod tests {
             "2026-11-31T09:30",
             "x",
         ] {
-            let e = datetime(text).unwrap_err();
+            let e = datetime(text, None).unwrap_err();
             assert_eq!(e.code, "bad_datetime", "{text}");
             assert_eq!(e.message, format!("Not a date and time: '{text}'."));
             assert_eq!(
@@ -308,9 +348,61 @@ mod tests {
             );
         }
         assert_eq!(
-            datetime("0000-01-01T10:00").unwrap_err().code,
+            datetime("0000-01-01T10:00", None).unwrap_err().code,
             "date_out_of_range"
         );
+    }
+
+    #[test]
+    fn reads_instants_and_zones() {
+        let berlin = timezone("europe/BERLIN").unwrap();
+        assert_eq!(berlin.iana_name(), Some("Europe/Berlin"));
+        assert_eq!(timezone("UTC").unwrap().iana_name(), Some("UTC"));
+        let e = timezone("Mars/Base").unwrap_err();
+        assert_eq!(
+            (e.code, e.message.as_str(), e.hint.as_deref()),
+            (
+                "unknown_timezone",
+                "Unknown time zone: 'Mars/Base'.",
+                Some("Use an IANA name such as Europe/Berlin or America/New_York.")
+            )
+        );
+        let instant = |text| match datetime(text, Some(&berlin)) {
+            Ok(Moment::Zoned(z)) => z.timestamp().to_string(),
+            other => panic!("{text}: {other:?}"),
+        };
+        assert_eq!(instant("2026-11-02T09:30:00Z"), "2026-11-02T09:30:00Z");
+        assert_eq!(instant("2026-11-02t09:30z"), "2026-11-02T09:30:00Z");
+        assert_eq!(instant("2026-11-02 09:30+05:30"), "2026-11-02T04:00:00Z");
+        assert_eq!(instant("2026-11-02T09:30-04:00"), "2026-11-02T13:30:00Z");
+        // Clock times are read in the zone: 09:30 in Berlin is 08:30Z in November.
+        assert_eq!(instant("2026-11-02T09:30"), "2026-11-02T08:30:00Z");
+        assert_eq!(instant("2026-11-02"), "2026-11-01T23:00:00Z");
+        assert!(matches!(
+            datetime("now", Some(&berlin)),
+            Ok(Moment::Zoned(_))
+        ));
+        let e = datetime("2026-11-02T09:30:00Z", None).unwrap_err();
+        assert_eq!(e.code, "tz_required");
+        assert_eq!(
+            e.message,
+            "2026-11-02T09:30:00Z has a UTC offset, so the business's time zone is needed."
+        );
+        assert_eq!(
+            e.hint.as_deref(),
+            Some("Add --tz, e.g. --tz Europe/Berlin, or give local times without an offset.")
+        );
+        for text in [
+            "2026-11-02T09:30+5",
+            "2026-11-02T09:30+05:60",
+            "2026-11-02T09:30Zz",
+        ] {
+            assert_eq!(
+                datetime(text, None).unwrap_err().code,
+                "bad_datetime",
+                "{text}"
+            );
+        }
     }
 
     #[test]
