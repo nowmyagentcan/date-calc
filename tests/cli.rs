@@ -1218,7 +1218,6 @@ fn names_adar_by_the_year() {
 }
 
 #[test]
-#[ignore = "known bug: F14"]
 fn refuses_adar_ii_in_a_common_year() {
     let (code, v) = json(&["convert", "1", "Adar", "II", "5786"]);
     assert_eq!(
@@ -1228,7 +1227,6 @@ fn refuses_adar_ii_in_a_common_year() {
 }
 
 #[test]
-#[ignore = "known bug: F13"]
 fn reads_chinese_month_names() {
     assert_eq!(
         gregorian(&["convert", "1", "Month", "1", "2026"]),

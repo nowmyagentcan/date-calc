@@ -314,9 +314,7 @@ pub fn to_gregorian(
     };
     found.map_err(|why| {
         let name = cal.name();
-        let leap_year = cal == Hebrew
-            && icu_calendar::Date::try_new(year.into(), Month::leap(5), 1, icu::Hebrew).is_ok();
-        let month_name = month_name(cal, month, leap, leap_year);
+        let month_name = month_name(cal, month, leap, cal == Hebrew && hebrew_leap(year));
         let text = match cal {
             Chinese => format!("{}, day {day}, {year}", month_name.to_lowercase()),
             _ => format!("{day} {month_name} {year}"),
@@ -338,6 +336,11 @@ pub fn to_gregorian(
             .hint(format!("{month_name} {year} has {n} days.")),
         }
     })
+}
+
+/// A Hebrew year with Adar I and Adar II.
+fn hebrew_leap(year: i32) -> bool {
+    icu_calendar::Date::try_new(year.into(), Month::leap(5), 1, icu::Hebrew).is_ok()
 }
 
 /// Why a calendar date can't be converted.
@@ -454,16 +457,24 @@ const VARIANTS: [(&str, Calendar, u8, bool); 22] = [
     ("Chaitra", BikramSambat, 12, false),
 ];
 
+/// A month name in lower case without spaces, hyphens and apostrophes.
+fn key(name: &str) -> String {
+    name.chars()
+        .filter(|c| !matches!(c, ' ' | '-' | '\'' | '\u{2019}'))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 /// A month by name, in any case, ignoring spaces, hyphens and apostrophes: its calendar
-/// (Islamic names give Umm al-Qura), number and whether it is a leap month.
+/// (Islamic names give Umm al-Qura; `Month N` and `Leap month N` Chinese), number and whether
+/// it is a leap month.
 pub(crate) fn month_by_name(name: &str) -> Option<(Calendar, u8, bool)> {
-    let key = |s: &str| -> String {
-        s.chars()
-            .filter(|c| !matches!(c, ' ' | '-' | '\'' | '\u{2019}'))
-            .flat_map(char::to_lowercase)
-            .collect()
-    };
     let wanted = key(name);
+    for (prefix, leap) in [("leapmonth", true), ("month", false)] {
+        if let Some(n) = wanted.strip_prefix(prefix) {
+            return Some((Chinese, number(n, 2)?, leap));
+        }
+    }
     let tables = [
         (UmmAlQura, &ISLAMIC),
         (Hebrew, &HEBREW),
@@ -497,18 +508,21 @@ fn read(input: &str, from: Option<Calendar>) -> Result<(Calendar, Date), Error> 
         && let (Some(day), Some(year)) = (number(day, 2), number(year, 4))
         && let Some((cal, month, leap)) = month_by_name(&name.join(" "))
     {
+        let missing = |in_cal: Calendar, month: String| {
+            let text = format!(
+                "There is no {day} {month} {year} in the {} calendar.",
+                in_cal.name()
+            );
+            Error::new("bad_calendar_date", text)
+        };
+        if cal == Hebrew && key(&name.join(" ")) == "adarii" && !hebrew_leap(year) {
+            return Err(missing(Hebrew, "Adar II".into()));
+        }
         let cal = match from {
             None => cal,
             Some(IslamicCivil) if cal == UmmAlQura => IslamicCivil,
             Some(f) if f == cal => cal,
-            Some(f) => {
-                let text = format!("{day} {} {year}", month_name(cal, month, leap, false));
-                let name = f.name();
-                return Err(Error::new(
-                    "bad_calendar_date",
-                    format!("There is no {text} in the {name} calendar."),
-                ));
-            }
+            Some(f) => return Err(missing(f, month_name(cal, month, leap, false))),
         };
         return Ok((cal, to_gregorian(cal, year, month, leap, day)?));
     }

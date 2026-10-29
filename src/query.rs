@@ -289,6 +289,7 @@ mod tests {
         );
         assert_eq!(parse("1 Ramadan 1448"), Ok(convert("1 Ramadan 1448", None)));
         assert_eq!(parse("1 adar i 5787"), Ok(convert("1 adar i 5787", None)));
+        assert_eq!(parse("1 Month 1 2026"), Ok(convert("1 Month 1 2026", None)));
         assert_eq!(
             parse("10 Kartik 2083 BS"),
             Ok(convert("10 Kartik 2083", None))
