@@ -3,7 +3,6 @@
 use date_calc::query::parse;
 
 #[test]
-#[ignore = "known bug: F01"]
 fn reads_any_unicode_without_panicking() {
     let words = [
         "から",

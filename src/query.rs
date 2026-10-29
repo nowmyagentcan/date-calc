@@ -89,7 +89,7 @@ fn date_like(word: &str) -> bool {
 
 /// `HH:MM`, maybe with seconds and an offset.
 fn time_like(word: &str) -> bool {
-    word.len() >= 5 && digits(&word[..2], 2) && word.as_bytes()[2] == b':'
+    word.len() >= 5 && word.get(..2).is_some_and(|h| digits(h, 2)) && word.as_bytes()[2] == b':'
 }
 
 /// A date or date-time at the start of `words`: its text, whether it has a time, and the
