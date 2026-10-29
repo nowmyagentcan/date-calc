@@ -8,7 +8,7 @@ use date_calc::days::Roll;
 use date_calc::error::Error;
 use date_calc::input::Unit;
 use date_calc::report::{self, Op, Options};
-use date_calc::{interactive, text};
+use date_calc::{interactive, mcp, text};
 
 static VERSION: LazyLock<String> = LazyLock::new(|| {
     let (version, released) = date_calc::data::source();
@@ -141,6 +141,13 @@ enum Command {
         country: Option<String>,
         #[command(flatten)]
         out: Out,
+    },
+    /// Run the MCP server on stdio
+    #[command(after_help = EXAMPLES)]
+    Mcp {
+        /// Show the cause of an error
+        #[arg(long)]
+        debug: bool,
     },
 }
 
@@ -285,6 +292,7 @@ impl Command {
                 o.country = country;
                 Op::Countries
             }
+            Command::Mcp { .. } => unreachable!("servers run on their own"),
         };
         (op, o)
     }
@@ -308,10 +316,10 @@ fn check(args: &[OsString]) -> Result<(), Error> {
 }
 
 /// Parses the command line; with `--json`, clap's complaint comes back as the error object.
-fn parse(args: &[OsString]) -> Result<(Op, Options), Error> {
+fn parse(args: &[OsString]) -> Result<Command, Error> {
     check(args)?;
     match Cli::try_parse_from(args) {
-        Ok(cli) => Ok(cli.command.into_op()),
+        Ok(cli) => Ok(cli.command),
         Err(e) if e.use_stderr() && args.iter().any(|a| a == "--json") => {
             let text = e.render().to_string();
             let first = text.split("\n\n").next().unwrap_or_default();
@@ -331,7 +339,15 @@ fn main() -> ExitCode {
     }
     let flag = |name: &str| args.iter().any(|a| a == name);
     let (json, debug) = (flag("--json"), flag("--debug"));
-    let (out, code) = match parse(&args).and_then(|(op, o)| report::run(&op, &o)) {
+    let answer = match parse(&args) {
+        Ok(Command::Mcp { debug }) => return served(mcp::serve(), debug),
+        Ok(command) => {
+            let (op, o) = command.into_op();
+            report::run(&op, &o)
+        }
+        Err(e) => Err(e),
+    };
+    let (out, code) = match answer {
         Ok(answer) if json => (json_line(&answer), 0),
         Ok(answer) => (people(text::answer(&answer), &io::stdout()), 0),
         Err(e) => {
@@ -376,6 +392,20 @@ fn interactive() -> ExitCode {
             ExitCode::from(3)
         }
         _ => ExitCode::SUCCESS,
+    }
+}
+
+/// The exit of a face that runs until its client leaves.
+fn served(result: Result<(), Error>, debug: bool) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            if debug {
+                let _ = writeln!(anstream::stderr(), "debug: {e:?}");
+            }
+            fail(&e);
+            ExitCode::from(e.exit_code())
+        }
     }
 }
 

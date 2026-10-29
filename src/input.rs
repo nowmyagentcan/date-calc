@@ -204,8 +204,20 @@ pub fn weekend_text(days: u8) -> String {
 }
 
 /// What an `add` amount counts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Unit {
+    #[default]
     BusinessDays,
     Days,
     Weeks,

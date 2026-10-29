@@ -21,7 +21,7 @@ pub struct Country {
     pub weekend: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub struct Region {
     pub code: &'static str,
     pub names: Vec<&'static str>,

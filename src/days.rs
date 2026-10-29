@@ -28,7 +28,7 @@ pub enum Day {
 }
 
 /// Something the answer depends on that the user may not expect; it doesn't fail the command.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub struct Warning {
     pub code: &'static str,
     pub message: String,
@@ -75,8 +75,20 @@ pub struct Between {
 }
 
 /// How `add` moves a calendar-unit result that isn't a business day.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Roll {
+    #[default]
     None,
     Following,
     Preceding,

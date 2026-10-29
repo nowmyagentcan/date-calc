@@ -1,6 +1,7 @@
 //! Each operation's answer as one value: what `--json` prints and text output formats.
 
 use jiff::civil::Date;
+use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::Number;
 
@@ -91,7 +92,7 @@ impl Answer {
 }
 
 /// The data and versions every answer is computed from.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Data {
     pub holidays: String,
     pub tzdata: &'static str,
@@ -110,14 +111,15 @@ fn data() -> Data {
 }
 
 /// A country or region: its code and English name (a region's first alias, or its code).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Named {
     pub code: &'static str,
     pub name: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Holiday {
+    #[schemars(with = "String")]
     pub date: Date,
     pub weekday: &'static str,
     pub name: &'static str,
@@ -134,9 +136,11 @@ pub struct Holiday {
     pub regions: Vec<&'static str>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Between {
+    #[schemars(with = "String")]
     pub start: Date,
+    #[schemars(with = "String")]
     pub end: Date,
     pub include_start: bool,
     pub include_end: bool,
@@ -149,14 +153,16 @@ pub struct Between {
     pub elapsed_days: i64,
     pub elapsed: String,
     pub holidays: Vec<Holiday>,
+    #[schemars(with = "Vec<String>")]
     pub weekend_workdays: Vec<Date>,
     pub weekend: Vec<&'static str>,
     pub warnings: Vec<Warning>,
     pub data: Data,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Skipped {
+    #[schemars(with = "String")]
     pub date: Date,
     pub reason: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -164,13 +170,13 @@ pub struct Skipped {
 }
 
 /// The working hours and zone a business-hours answer used.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Clock {
     pub hours: String,
     pub timezone: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Added {
     /// A date, or a date-time for business hours.
     pub start: String,
@@ -187,6 +193,7 @@ pub struct Added {
     pub skipped: Vec<Skipped>,
     #[serde(skip_serializing_if = "is_zero")]
     pub skipped_more: usize,
+    #[schemars(with = "Vec<String>")]
     pub weekend_workdays: Vec<Date>,
     pub weekend: Vec<&'static str>,
     pub warnings: Vec<Warning>,
@@ -197,7 +204,7 @@ fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Hours {
     pub start: String,
     pub end: String,
@@ -211,6 +218,7 @@ pub struct Hours {
     pub duration: String,
     pub business_days: i64,
     pub holidays: Vec<Holiday>,
+    #[schemars(with = "Vec<String>")]
     pub weekend_workdays: Vec<Date>,
     pub weekend: Vec<&'static str>,
     pub warnings: Vec<Warning>,
@@ -417,16 +425,19 @@ fn add(start: &str, amount: &str, unit: Unit, roll: Roll, o: &Options) -> Result
     })
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Holidays {
     pub country: Named,
     pub region: Option<Named>,
+    #[schemars(with = "String")]
     pub from: Date,
+    #[schemars(with = "String")]
     pub to: Date,
     /// National holidays, or everything the region keeps.
     pub holidays: Vec<Holiday>,
     /// Holidays only some regions keep; empty with a region.
     pub regional: Vec<Holiday>,
+    #[schemars(with = "Vec<String>")]
     pub weekend_workdays: Vec<Date>,
     pub weekend: Vec<&'static str>,
     pub warnings: Vec<Warning>,
@@ -442,6 +453,12 @@ fn listing(
     let (from, to) = match (year, from, to) {
         (_, None, None) => {
             let y = year.unwrap_or_else(|| jiff::Zoned::now().year());
+            if !(1..=9999).contains(&y) {
+                return Err(Error::new(
+                    "date_out_of_range",
+                    format!("{y} is outside 0001-01-01 to 9999-12-31."),
+                ));
+            }
             (jiff::civil::date(y, 1, 1), jiff::civil::date(y, 12, 31))
         }
         (None, Some(from), Some(to)) => (input::date(from)?, input::date(to)?),
@@ -475,15 +492,16 @@ fn listing(
     })
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Gregorian {
+    #[schemars(with = "String")]
     pub date: Date,
     pub weekday: &'static str,
     pub iso_week: String,
     pub day_of_year: i16,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct CalendarDate {
     pub calendar: &'static str,
     pub year: i32,
@@ -499,7 +517,7 @@ pub struct CalendarDate {
     pub note: Option<&'static str>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Converted {
     pub input: String,
     pub from: &'static str,
@@ -545,7 +563,7 @@ fn convert(date: &str, from: Option<&str>, to: Option<&str>) -> Result<Converted
     })
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct CountryInfo {
     pub code: &'static str,
     pub name: &'static str,
@@ -569,20 +587,21 @@ fn info(c: &data::Country) -> CountryInfo {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Countries {
     pub countries: Vec<CountryInfo>,
     pub data: Data,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct WeekendChange {
+    #[schemars(with = "String")]
     pub from: Date,
     pub weekend: Vec<&'static str>,
     pub region: Option<&'static str>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Country {
     #[serde(flatten)]
     pub country: CountryInfo,
