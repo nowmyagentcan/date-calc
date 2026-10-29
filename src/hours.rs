@@ -143,7 +143,8 @@ pub struct Hours {
 }
 
 /// Working time from `start` to `end`: each window `[from, to)` on each business day,
-/// intersected with the interval.
+/// intersected with the interval. Time is counted once even where a clock change makes windows
+/// overlap, as `add` consumes it.
 pub fn between(
     place: &Place,
     start: &Moment,
@@ -160,16 +161,19 @@ pub fn between(
     place.covers(from)?;
     place.covers(to)?;
     let (a, b, zone) = (lo.second(), hi.second(), start.zone());
-    let (mut seconds, mut business_days) = (0, 0);
+    let (mut seconds, mut business_days, mut t) = (0, 0, a);
     let mut d = first_day(place, from);
     loop {
         if place.day(d) == Day::Business {
-            let worked: i64 = windows
-                .iter()
-                .map(|w| (edge(d, w.end, zone).min(b) - edge(d, w.start, zone).max(a)).max(0))
-                .sum();
-            seconds += worked;
-            business_days += i64::from(worked > 0);
+            let before = seconds;
+            for w in windows {
+                let (ws, we) = (edge(d, w.start, zone).max(t), edge(d, w.end, zone).min(b));
+                if we > ws {
+                    seconds += we - ws;
+                    t = we;
+                }
+            }
+            business_days += i64::from(seconds > before);
         }
         if d >= to {
             break;
@@ -387,6 +391,15 @@ mod tests {
         // 02:30 falls in the spring-forward gap, so the window starts an hour later, at 03:30.
         let r = zoned(anyday(), "2026-03-08", "2026-03-09", "02:30-04:00", ny);
         assert_eq!(r.seconds, 1800);
+        // ... so 01:00-02:30 runs to 03:30 and overlaps 03:00-04:00: 06:00Z-08:00Z, counted once.
+        let r = zoned(
+            anyday(),
+            "2026-03-08",
+            "2026-03-09",
+            "01:00-02:30,03:00-04:00",
+            ny,
+        );
+        assert_eq!(r.seconds, 7200);
         // Instants are read in the zone: Fri 09:00-17:00 and Mon 09:00-11:00 at -07 (tzdata
         // 2026b ended Vancouver's clock changes).
         let bc = Place::new(Some("CA"), Some("BC"), None).unwrap();

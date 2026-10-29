@@ -1287,7 +1287,6 @@ fn added_business_hours_count_back_to_the_amount() {
 }
 
 #[test]
-#[ignore = "known bug: F04"]
 fn added_business_hours_count_back_across_a_gap_between_windows() {
     let extra = "--hours 01:00-02:30,03:00-04:00 --weekend none --tz America/New_York";
     hours_round_trip("2026-03-08T01:00", "2.5", extra);
