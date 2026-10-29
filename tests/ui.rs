@@ -261,6 +261,12 @@ fn answers_every_query_form_like_the_cli() {
         (json!({"query": ""}), "bad_query", None),
         (json!({"query": "next tuesday"}), "bad_query", None),
         (
+            json!({"query": "2026-02-01 から 2026-02-28"}),
+            "bad_query",
+            None,
+        ),
+        (json!({"query": "x💥yz 2026"}), "bad_query", None),
+        (
             json!({"query": "2026-02-30 to 2026-03-05", "country": "CN"}),
             "bad_date",
             Some(&["between", "2026-02-30", "2026-03-05", "-c", "CN"]),
