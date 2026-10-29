@@ -742,3 +742,11 @@ fn shows_the_cause_with_debug() {
     );
     assert!(out.starts_with("{\"error\":"));
 }
+
+#[test]
+fn asks_for_a_command_without_a_terminal() {
+    let want = "✗ No command given.\n  Try: date-calc between 2026-02-01 2026-02-28 -c CN\n";
+    assert_eq!(run(&[]), (2, String::new(), want.into()));
+    let (_, out, _) = run(&["--help"]);
+    assert!(out.contains("\nUsage: date-calc [COMMAND]\n"));
+}

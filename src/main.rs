@@ -8,7 +8,7 @@ use date_calc::days::Roll;
 use date_calc::error::Error;
 use date_calc::input::Unit;
 use date_calc::report::{self, Op, Options};
-use date_calc::text;
+use date_calc::{interactive, text};
 
 static VERSION: LazyLock<String> = LazyLock::new(|| {
     let (version, released) = date_calc::data::source();
@@ -35,6 +35,7 @@ const EXAMPLES: &str = "\x1b[1;4mExamples:\x1b[0m
     name = "date-calc",
     bin_name = "date-calc",
     about = text::SENTENCE,
+    override_usage = "date-calc [COMMAND]",
     version = VERSION.as_str(),
     after_help = EXAMPLES,
     disable_help_subcommand = true
@@ -325,6 +326,9 @@ fn parse(args: &[OsString]) -> Result<(Op, Options), Error> {
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().collect();
+    if args.len() == 1 {
+        return interactive();
+    }
     let flag = |name: &str| args.iter().any(|a| a == name);
     let (json, debug) = (flag("--json"), flag("--debug"));
     let (out, code) = match parse(&args).and_then(|(op, o)| report::run(&op, &o)) {
@@ -354,6 +358,25 @@ fn json_line(answer: &report::Answer) -> String {
     serde_json::to_string(answer).expect("answers are plain data")
         + "
 "
+}
+
+/// The banner and a prompt on a terminal; with no terminal to ask on, a usage error.
+fn interactive() -> ExitCode {
+    if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
+        fail(
+            &Error::new("usage", "No command given.")
+                .hint("Try: date-calc between 2026-02-01 2026-02-28 -c CN"),
+        );
+        return ExitCode::from(2);
+    }
+    let unicode = text::unicode(true);
+    match interactive::run(io::stdin().lock(), &mut anstream::stdout(), unicode) {
+        Err(e) if e.kind() != ErrorKind::BrokenPipe => {
+            fail(&Error::new("io", format!("Couldn't write output: {e}.")));
+            ExitCode::from(3)
+        }
+        _ => ExitCode::SUCCESS,
+    }
 }
 
 /// Writes the answer to stdout; a closed stdout ends quietly.

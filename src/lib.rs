@@ -4,6 +4,7 @@ pub mod days;
 pub mod error;
 pub mod hours;
 pub mod input;
+pub mod interactive;
 pub mod query;
 pub mod report;
 pub mod text;
