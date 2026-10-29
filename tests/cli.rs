@@ -1317,6 +1317,47 @@ fn keeps_zoned_times_inside_year_one() {
 }
 
 #[test]
+#[ignore = "known bug: R2-01"]
+fn historical_offsets_keep_dates_and_weekdays_in_step() {
+    for start in ["1900-01-01T00:00", "0001-01-01T00:00"] {
+        let (code, v) = json(&["add", start, "0", "-u", "bh", "--tz", "Asia/Kolkata"]);
+        if code != 0 {
+            assert_eq!(v["error"]["code"], "date_out_of_range", "{start}: {v}");
+            continue;
+        }
+        let result = v["result"].as_str().unwrap();
+        let day: jiff::civil::Date = result[..10].parse().expect(result);
+        let days = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+        let weekday = days[day.weekday().to_monday_zero_offset() as usize];
+        assert_eq!(v["weekday"], weekday, "{result}");
+    }
+}
+
+#[test]
+#[ignore = "known bug: R2-02"]
+fn warns_of_estimated_dates_among_regional_holidays() {
+    let v = answer(&[
+        "holidays",
+        "IN",
+        "--from",
+        "2026-01-17",
+        "--to",
+        "2026-01-17",
+    ]);
+    assert_eq!(v["regional"][0]["estimated"], true, "{v}");
+    assert!(codes(&v).contains(&"estimated_dates"), "{v}");
+}
+
+#[test]
+fn keeps_the_first_hundred_skipped_days_and_counts_the_rest() {
+    let v = answer(&["add", "2026-11-02", "1000"]);
+    let result: jiff::civil::Date = v["result"].as_str().unwrap().parse().unwrap();
+    let passed = (result - jiff::civil::date(2026, 11, 2)).get_days() - 1000;
+    assert_eq!(v["skipped"].as_array().unwrap().len(), 100);
+    assert_eq!(v["skipped_more"], passed - 100);
+}
+
+#[test]
 fn reads_a_backwards_holiday_range_in_order() {
     let mut v = answer(&[
         "holidays",
