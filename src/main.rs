@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 use std::sync::LazyLock;
 
@@ -7,8 +8,7 @@ use date_calc::days::Roll;
 use date_calc::error::Error;
 use date_calc::input::Unit;
 use date_calc::report::{self, Op, Options};
-
-const SENTENCE: &str = "Count business days, add workdays, list holidays, convert dates.";
+use date_calc::text;
 
 static VERSION: LazyLock<String> = LazyLock::new(|| {
     let (version, released) = date_calc::data::source();
@@ -34,7 +34,7 @@ const EXAMPLES: &str = "\x1b[1;4mExamples:\x1b[0m
 #[command(
     name = "date-calc",
     bin_name = "date-calc",
-    about = SENTENCE,
+    about = text::SENTENCE,
     version = VERSION.as_str(),
     after_help = EXAMPLES,
     disable_help_subcommand = true
@@ -331,24 +331,32 @@ fn main() -> ExitCode {
     let json = args.iter().any(|a| a == "--json");
     let answer = parse(&args).and_then(|(op, o, _)| report::run(&op, &o));
     match answer {
+        Ok(answer) if json => {
+            let out = serde_json::to_string(&answer).expect("answers are plain data");
+            anstream::println!("{out}");
+            ExitCode::SUCCESS
+        }
         Ok(answer) => {
-            println!(
-                "{}",
-                serde_json::to_string(&answer).expect("answers are plain data")
-            );
+            anstream::print!("{}", people(text::answer(&answer), &io::stdout()));
             ExitCode::SUCCESS
         }
         Err(e) if json => {
-            println!("{}", report::failure(&e));
+            anstream::println!("{}", report::failure(&e));
             ExitCode::from(e.exit_code())
         }
         Err(e) => {
-            eprintln!("✗ {}", e.message);
-            if let Some(hint) = &e.hint {
-                eprintln!("  {hint}");
-            }
+            anstream::eprint!("{}", people(text::error(&e), &io::stderr()));
             ExitCode::from(e.exit_code())
         }
+    }
+}
+
+/// Text for a person, in ASCII when their console can't show Unicode.
+fn people(text: String, stream: &impl IsTerminal) -> String {
+    if text::unicode(stream.is_terminal()) {
+        text
+    } else {
+        text::ascii(&text)
     }
 }
 

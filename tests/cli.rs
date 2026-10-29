@@ -537,3 +537,117 @@ fn lists_countries_and_one_country() {
         ])
     );
 }
+
+#[test]
+fn prints_text_for_people() {
+    let text = |args: &str| {
+        let (code, out, err) = run(&args.split(' ').collect::<Vec<_>>());
+        assert_eq!((code, err.as_str()), (0, ""), "{args}");
+        out
+    };
+    assert_eq!(
+        text("between 2026-02-01 2026-02-28 -c CN"),
+        "16 business days
+2026-02-01 to 2026-02-28 (both counted) · China
+28 days: 6 weekend, 6 holidays · 27 days apart
+  Mon 2026-02-16  Chinese New Year's Eve
+  Tue 2026-02-17  Chinese New Year (Spring Festival)
+  Wed 2026-02-18  Chinese New Year (Spring Festival)
+  Thu 2026-02-19  Chinese New Year (Spring Festival)
+  Fri 2026-02-20  Day off (substituted from 02/14/2026)
+  Mon 2026-02-23  Day off (substituted from 02/28/2026)
+Worked weekend days: Sat 2026-02-14, Sat 2026-02-28
+python-holidays 0.107 (2026-10-19)
+"
+    );
+    assert_eq!(
+        text("add 2026-01-31 1 -u months --roll modified-following -c DE"),
+        "Fri 2026-02-27
+1 month after Sat 2026-01-31 · Germany
+Rolled modified-following past 1 day:
+  Sat 2026-02-28  weekend
+python-holidays 0.107 (2026-10-19)
+"
+    );
+    assert_eq!(
+        text("hours 2026-11-02T10:00 2026-11-05T15:00 -c DE"),
+        "29:00 business hours (29.00 h)
+Mon 2026-11-02 10:00 to Thu 2026-11-05 15:00 · Germany
+Hours 09:00-17:00 on 4 business days · clock time
+python-holidays 0.107 (2026-10-19)
+"
+    );
+    let holidays = text("holidays DE 2026");
+    assert!(
+        holidays.starts_with(
+            "Germany · 2026 · 9 national holidays\n  Thu 2026-01-01  New Year's Day\n"
+        )
+    );
+    assert!(holidays.contains(
+        "\nRegional:\n  Tue 2026-01-06  Epiphany                   Augsburg, BW, BY, ST\n"
+    ));
+    assert!(text("holidays DE 2026 -r BY").contains("\n  Tue 2026-01-06  Epiphany (regional)\n"));
+    let us = text("holidays US --from 2026-07-01 --to 2026-07-31");
+    assert!(us.starts_with("United States · 2026-07-01 to 2026-07-31 · 2 national holidays\n  Fri 2026-07-03  Independence Day (observed) (not in MA)\n"), "{us}");
+    assert_eq!(
+        text("convert 2026-10-27 --to hebrew"),
+        "Gregorian  Tue 2026-10-27 · week 2026-W44 · day 300
+Hebrew     16 Cheshvan 5787
+icu_calendar 2.4.0 · nepali-datetime 1.0.8.5 (2026-05-07)
+"
+    );
+    assert_eq!(
+        text("countries AE"),
+        "United Arab Emirates (AE, ARE) · 2000-2050
+Weekend:
+  from 2000-01-01  Fri, Sat
+  from 2022-01-01  Sat, Sun
+python-holidays 0.107 (2026-10-19)
+"
+    );
+    assert!(text("countries").contains("\nCN  China "));
+    let skipped = text("add 2000-01-03 50 -c US -r NY");
+    assert!(skipped.contains("\n  … and 13 more\n"), "{skipped}");
+    let zoned = text("add 2026-11-02T16:00 3 -u bh -c CA-BC --tz America/Vancouver");
+    assert!(zoned.starts_with("Tue 2026-11-03 11:00 -07:00\n3 business hours after Mon 2026-11-02 16:00 -07:00 · Canada, British Columbia\nHours 09:00-17:00 · America/Vancouver\n"), "{zoned}");
+    assert!(zoned.ends_with("python-holidays 0.107 (2026-10-19) · tzdata 2026f\n"));
+    let (code, out, err) = run(&["between", "2026-02-30", "2026-03-05"]);
+    let want = "✗ Not a date: '2026-02-30'.\n  Use YYYY-MM-DD, e.g. 2026-02-01, or today.\n";
+    assert_eq!((code, out.as_str(), err.as_str()), (1, "", want));
+}
+
+#[test]
+fn colours_only_when_asked_and_never_with_no_color() {
+    let (_, out, _) = run(&["between", "2026-02-01", "2026-02-28", "-c", "CN"]);
+    assert!(!out.contains('\x1b'));
+    let forced = |no_color: &str| {
+        let out = date_calc(&["between", "2026-02-01", "2026-02-28", "-c", "CN"])
+            .env("CLICOLOR_FORCE", "1")
+            .env("NO_COLOR", no_color)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert!(!forced("1").contains('\x1b'));
+    if cfg!(not(windows)) {
+        // Windows turns ANSI codes into console calls, which a pipe can't take.
+        assert!(forced("").starts_with("\x1b[1m16 business days\x1b[0m\n\x1b[2m"));
+    }
+}
+
+#[test]
+fn shows_examples_in_help() {
+    for args in [&["--help"][..], &["between", "--help"], &["convert", "-h"]] {
+        let (code, out, _) = run(args);
+        assert_eq!(code, 0);
+        assert!(
+            out.contains("\nExamples:\n  date-calc between 2026-02-01 2026-02-28 -c CN\n"),
+            "{args:?}"
+        );
+        assert!(out.ends_with("  date-calc countries DE\n"), "{args:?}");
+    }
+    let (_, out, _) = run(&["--help"]);
+    assert!(out.starts_with("Count business days, add workdays, list holidays, convert dates.\n"));
+    let (_, out, _) = run(&["add", "--help"]);
+    assert!(out.contains("[default: 09:00-17:00]"));
+}

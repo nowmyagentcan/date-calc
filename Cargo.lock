@@ -127,6 +127,7 @@ dependencies = [
 name = "date-calc"
 version = "0.1.0"
 dependencies = [
+ "anstream",
  "clap",
  "icu_calendar",
  "jiff",
