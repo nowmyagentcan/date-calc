@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Date calculator</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><rect width='256' height='256' rx='57' fill='%23d97706'/><path transform='translate(48 48) scale(.625)' fill='%23fff' d='M208,28H188V24a12,12,0,0,0-24,0v4H92V24a12,12,0,0,0-24,0v4H48A20,20,0,0,0,28,48V208a20,20,0,0,0,20,20H208a20,20,0,0,0,20-20V48A20,20,0,0,0,208,28ZM68,52a12,12,0,0,0,24,0h72a12,12,0,0,0,24,0h16V76H52V52ZM52,204V100H204V204Zm92-76a16,16,0,1,1-16-16A16,16,0,0,1,144,128Zm48,0a16,16,0,1,1-16-16A16,16,0,0,1,192,128ZM96,176a16,16,0,1,1-16-16A16,16,0,0,1,96,176Zm48,0a16,16,0,1,1-16-16A16,16,0,0,1,144,176Zm48,0a16,16,0,1,1-16-16A16,16,0,0,1,192,176Z'/></svg>">
+<style>
+:root { --bg:#fafaf9; --fg:#1c1b1a; --muted:#6b6966; --line:#e7e5e2; --field:#f2f1ef; --accent:#0f7b4a; --danger:#b42318; --r:8px;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace; }
+@media (prefers-color-scheme: dark) { :root { --bg:#121110; --fg:#ecebe9; --muted:#9a9894; --line:#2a2826; --field:#1b1a19; --accent:#5fd38d; --danger:#f97066; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
+main { max-width: 640px; margin: 0 auto; padding: 18px 16px 12px; display: grid; gap: 12px; }
+h1 { margin: 0; font-size: 18px; font-weight: 600; text-align: center; letter-spacing: -0.01em; }
+p { margin: 0; }
+svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
+.visual { width: auto; height: 64px; justify-self: center; color: var(--muted); }
+form { display: grid; gap: 12px; }
+label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+input { width: 100%; min-height: 40px; padding: 8px 10px; font: inherit; font-size: 15px; color: var(--fg); background: var(--field); border: 1px solid var(--line); border-radius: var(--r); }
+input::placeholder { color: var(--muted); opacity: 1; }
+input:disabled { opacity: .55; cursor: not-allowed; }
+#query { font: 18px/1.4 var(--mono); padding: 10px 12px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.three { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: 12px; margin-top: 10px; }
+.checks { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 10px; }
+.checks label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--fg); }
+.checks input { width: 16px; min-height: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+summary { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); cursor: pointer; list-style: none; border-radius: var(--r); }
+summary::-webkit-details-marker { display: none; }
+details[open] summary svg { transform: rotate(90deg); }
+button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px 10px; font: inherit; font-size: 14px; color: var(--fg); background: var(--field); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; }
+button:active { transform: translateY(1px); }
+.go { justify-self: center; min-height: 40px; padding: 8px 32px; font-size: 15px; font-weight: 600; color: var(--bg); background: var(--accent); border-color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#out { display: grid; gap: 10px; min-height: 88px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r); align-content: start; }
+.muted, .dim { color: var(--muted); }
+.examples { display: flex; flex-wrap: wrap; gap: 8px; }
+.examples code { font: 14px var(--mono); }
+.examples span { color: var(--muted); }
+.bar { height: 3px; overflow: hidden; border-radius: var(--r); }
+.bar::after { content: ""; display: block; width: 40%; height: 100%; background: var(--accent); animation: slide 1.1s linear infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@media (prefers-reduced-motion: reduce) { .bar::after { width: 100%; animation: none; } }
+.head { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: start; }
+.big { font-size: 28px; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.big span { font-size: 17px; font-weight: 500; letter-spacing: 0; }
+.acts { display: flex; gap: 8px; }
+.sub { font-size: 13px; font-weight: 600; color: var(--muted); margin-top: 4px; }
+.data { font-size: 13px; color: var(--muted); }
+ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+li, .err { display: flex; gap: 8px; align-items: baseline; }
+li svg, .err svg { position: relative; top: 3px; }
+table { border-collapse: collapse; font-size: 14px; }
+td { padding: 3px 20px 0 0; vertical-align: top; }
+td:first-child { white-space: nowrap; }
+td:last-child { padding-right: 0; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.note { display: block; font-size: 13px; color: var(--muted); }
+.err { color: var(--danger); font-weight: 600; }
+.hint { padding-left: 24px; }
+footer { display: flex; justify-content: center; align-items: center; gap: 16px; font-size: 13px; }
+footer a { display: inline-flex; color: var(--muted); border-radius: 4px; }
+footer a:hover { color: var(--fg); }
+footer svg { width: 18px; height: 18px; }
+@media (max-width: 520px) { .two, .three, .head { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Count business days, add workdays, list holidays, convert dates.</h1>
+  <svg class="visual" viewBox="0 0 280 64" role="img" aria-label="Dates on a calendar become a count of business days">
+    <path transform="translate(0 8) scale(.1875)" d="M208,32H184V24a8,8,0,0,0-16,0v8H88V24a8,8,0,0,0-16,0v8H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM72,48v8a8,8,0,0,0,16,0V48h80v8a8,8,0,0,0,16,0V48h24V80H48V48ZM208,208H48V96H208V208Zm-68-76a12,12,0,1,1-12-12A12,12,0,0,1,140,132Zm44,0a12,12,0,1,1-12-12A12,12,0,0,1,184,132ZM96,172a12,12,0,1,1-12-12A12,12,0,0,1,96,172Zm44,0a12,12,0,1,1-12-12A12,12,0,0,1,140,172Zm44,0a12,12,0,1,1-12-12A12,12,0,0,1,184,172Z"/>
+    <path transform="translate(64 16) scale(.125)" d="M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z"/>
+    <rect x="113" y="15" width="166" height="34" rx="8" fill="none" stroke="currentColor" stroke-width="2"/>
+    <text x="196" y="37" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="15">16 business days</text>
+  </svg>
+
+  <form>
+    <label>Dates
+      <input id="query" placeholder="2026-02-01 to 2026-02-28" autocomplete="off" autocapitalize="off" spellcheck="false" autofocus>
+    </label>
+    <div class="two">
+      <label>Country
+        <input id="country" list="countries" placeholder="None (weekends only)" autocomplete="off" spellcheck="false">
+      </label>
+      <label>Region
+        <input id="region" list="regions" placeholder="Whole country" autocomplete="off" spellcheck="false" disabled>
+      </label>
+    </div>
+    <datalist id="countries"></datalist>
+    <datalist id="regions"></datalist>
+    <datalist id="zones"></datalist>
+    <details>
+      <summary><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z"/></svg>Options</summary>
+      <div class="checks">
+        <label><input id="include_start" type="checkbox" checked>Count the start date</label>
+        <label><input id="include_end" type="checkbox" checked>Count the end date</label>
+      </div>
+      <div class="three">
+        <label>Weekend
+          <input id="weekend" placeholder="The country's" autocomplete="off" spellcheck="false">
+        </label>
+        <label>Working hours
+          <input id="hours" value="09:00-17:00" autocomplete="off" spellcheck="false">
+        </label>
+        <label>Time zone
+          <input id="timezone" list="zones" placeholder="None (clock time)" autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+    </details>
+    <button class="go">Calculate</button>
+  </form>
+
+  <section id="out" aria-live="polite" aria-label="Result">
+    <p class="muted">Type dates above, or try one:</p>
+    <div class="examples">
+      <button type="button" data-ex="2026-02-01 to 2026-02-28" data-country="CN"><code>2026-02-01 to 2026-02-28</code><span>China</span></button>
+      <button type="button" data-ex="2026-11-02 +10" data-country="US"><code>2026-11-02 +10</code><span>United States</span></button>
+      <button type="button" data-ex="holidays 2026" data-country="DE"><code>holidays 2026</code><span>Germany</span></button>
+      <button type="button" data-ex="2026-10-27" data-country=""><code>2026-10-27</code><span>all calendars</span></button>
+    </div>
+  </section>
+
+  <footer>
+    <a href="https://nowmyagentcan.com">nowmyagentcan.com</a>
+    <a href="https://github.com/nowmyagentcan/date-calc" aria-label="date-calc on GitHub"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M208.31,75.68A59.78,59.78,0,0,0,202.93,28,8,8,0,0,0,196,24a59.75,59.75,0,0,0-48,24H124A59.75,59.75,0,0,0,76,24a8,8,0,0,0-6.93,4,59.78,59.78,0,0,0-5.38,47.68A58.14,58.14,0,0,0,56,104v8a56.06,56.06,0,0,0,48.44,55.47A39.8,39.8,0,0,0,96,192v8H72a24,24,0,0,1-24-24A40,40,0,0,0,8,136a8,8,0,0,0,0,16,24,24,0,0,1,24,24,40,40,0,0,0,40,40H96v16a8,8,0,0,0,16,0V192a24,24,0,0,1,48,0v40a8,8,0,0,0,16,0V192a39.8,39.8,0,0,0-8.44-24.53A56.06,56.06,0,0,0,216,112v-8A58.14,58.14,0,0,0,208.31,75.68ZM200,112a40,40,0,0,1-40,40H112a40,40,0,0,1-40-40v-8a41.74,41.74,0,0,1,6.9-22.48A8,8,0,0,0,80,73.83a43.81,43.81,0,0,1,.79-33.58,43.88,43.88,0,0,1,32.32,20.06A8,8,0,0,0,119.82,64h32.35a8,8,0,0,0,6.74-3.69,43.87,43.87,0,0,1,32.32-20.06A43.81,43.81,0,0,1,192,73.83a8.09,8.09,0,0,0,1,7.65A41.72,41.72,0,0,1,200,104Z"/></svg></a>
+    <a href="https://x.com/chayp05" aria-label="nowmyagentcan on X"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M214.75,211.71l-62.6-98.38,61.77-67.95a8,8,0,0,0-11.84-10.76L143.24,99.34,102.75,35.71A8,8,0,0,0,96,32H48a8,8,0,0,0-6.75,12.3l62.6,98.37-61.77,68a8,8,0,1,0,11.84,10.76l58.84-64.72,40.49,63.63A8,8,0,0,0,160,224h48a8,8,0,0,0,6.75-12.29ZM164.39,208,62.57,48h29L193.43,208Z"/></svg></a>
+  </footer>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const form = $("form"), out = $("#out"), query = $("#query"), country = $("#country"), region = $("#region");
+const icon = d => `<svg viewBox="0 0 256 256" aria-hidden="true"><path d="${d}"/></svg>`;
+const COPY = icon("M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z");
+const SAVE = icon("M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z");
+const WARN = icon("M236.8,188.09,149.35,36.22h0a24.76,24.76,0,0,0-42.7,0L19.2,188.09a23.51,23.51,0,0,0,0,23.72A24.35,24.35,0,0,0,40.55,224h174.9a24.35,24.35,0,0,0,21.33-12.19A23.51,23.51,0,0,0,236.8,188.09ZM222.93,203.8a8.5,8.5,0,0,1-7.48,4.2H40.55a8.5,8.5,0,0,1-7.48-4.2,7.59,7.59,0,0,1,0-7.72L120.52,44.21a8.75,8.75,0,0,1,15,0l87.45,151.87A7.59,7.59,0,0,1,222.93,203.8ZM120,144V104a8,8,0,0,1,16,0v40a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,180Z");
+const FAIL = icon("M165.66,101.66,139.31,128l26.35,26.34a8,8,0,0,1-11.32,11.32L128,139.31l-26.34,26.35a8,8,0,0,1-11.32-11.32L116.69,128,90.34,101.66a8,8,0,0,1,11.32-11.32L128,116.69l26.34-26.35a8,8,0,0,1,11.32,11.32ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const options = (list, value, label) => list.map(x => `<option value="${esc(value(x))}">${esc(label(x))}</option>`).join("");
+
+const D = { holidays: "python-holidays 0.107 (2026-10-19)", tzdata: "2026f", calendars: "icu_calendar 2.4.0", bikram_sambat: "nepali-datetime 1.0.8.5 (2026-05-07)" };
+const hol = (date, weekday, name, extra) => ({ date, weekday, name, observed: false, estimated: false, ...extra });
+const SAMPLES = {
+  "2026-02-01 to 2026-02-28": { op: "between", result: { start: "2026-02-01", end: "2026-02-28", include_start: true, include_end: true, country: { code: "CN", name: "China" }, region: null, business_days: 16, calendar_days: 28, weekend_days: 6, holiday_days: 6, elapsed_days: 27, elapsed: "P27D",
+    holidays: [hol("2026-02-16", "MON", "Chinese New Year's Eve"), hol("2026-02-17", "TUE", "Chinese New Year (Spring Festival)"), hol("2026-02-18", "WED", "Chinese New Year (Spring Festival)"), hol("2026-02-19", "THU", "Chinese New Year (Spring Festival)"), hol("2026-02-20", "FRI", "Day off (substituted from 02/14/2026)"), hol("2026-02-23", "MON", "Day off (substituted from 02/28/2026)")],
+    weekend_workdays: ["2026-02-14", "2026-02-28"], weekend: ["SAT", "SUN"], warnings: [], data: D },
+    text: "16 business days\n2026-02-01 to 2026-02-28 (both counted) · China\n28 days: 6 weekend, 6 holidays · 27 days apart\n  Mon 2026-02-16  Chinese New Year's Eve\n  Tue 2026-02-17  Chinese New Year (Spring Festival)\n  Wed 2026-02-18  Chinese New Year (Spring Festival)\n  Thu 2026-02-19  Chinese New Year (Spring Festival)\n  Fri 2026-02-20  Day off (substituted from 02/14/2026)\n  Mon 2026-02-23  Day off (substituted from 02/28/2026)\nWorked weekend days: Sat 2026-02-14, Sat 2026-02-28\npython-holidays 0.107 (2026-10-19)\n" },
+  "2026-11-02 +10": { op: "add", result: { start: "2026-11-02", amount: 10, unit: "business_days", result: "2026-11-17", weekday: "TUE", country: { code: "US", name: "United States" }, region: null, roll: "none",
+    skipped: [{ date: "2026-11-07", reason: "weekend" }, { date: "2026-11-08", reason: "weekend" }, { date: "2026-11-11", reason: "holiday", name: "Veterans Day" }, { date: "2026-11-14", reason: "weekend" }, { date: "2026-11-15", reason: "weekend" }],
+    weekend_workdays: [], weekend: ["SAT", "SUN"], warnings: [{ code: "regions_differ", message: "United States has regional holidays in this range (Election Day 2026-11-03 (DE, HI, IL, IN, LA, MI, MP, MT, NH, NJ, NY, WV), Citizenship Day 2026-11-04 (MP), Diwali 2026-11-08 (CA)); this uses national holidays only. Add --region, e.g. AK." }], data: D },
+    text: "Tue 2026-11-17\n10 business days after Mon 2026-11-02 · United States\nSkipped 5 days:\n  Sat 2026-11-07  weekend\n  Sun 2026-11-08  weekend\n  Wed 2026-11-11  Veterans Day\n  Sat 2026-11-14  weekend\n  Sun 2026-11-15  weekend\n! United States has regional holidays in this range (Election Day 2026-11-03 (DE, HI, IL, IN, LA, MI, MP, MT, NH, NJ, NY, WV), Citizenship Day 2026-11-04 (MP), Diwali 2026-11-08 (CA)); this uses national holidays only. Add --region, e.g. AK.\npython-holidays 0.107 (2026-10-19)\n" },
+  "2026-11-02 10:00 to 2026-11-05 15:00": { op: "hours", result: { start: "2026-11-02T10:00:00", end: "2026-11-05T15:00:00", country: { code: "DE", name: "Germany" }, region: null, hours: "09:00-17:00", timezone: null, seconds: 104400, business_hours: 29.0, duration: "29:00", business_days: 4, holidays: [], weekend_workdays: [], weekend: ["SAT", "SUN"], warnings: [], data: D },
+    text: "29:00 business hours (29.00 h)\nMon 2026-11-02 10:00 to Thu 2026-11-05 15:00 · Germany\nHours 09:00-17:00 on 4 business days · clock time\npython-holidays 0.107 (2026-10-19)\n" },
+  "holidays 2026": { op: "holidays", result: { country: { code: "DE", name: "Germany" }, region: null, from: "2026-01-01", to: "2026-12-31",
+    holidays: [hol("2026-01-01", "THU", "New Year's Day"), hol("2026-04-03", "FRI", "Good Friday"), hol("2026-04-06", "MON", "Easter Monday"), hol("2026-05-01", "FRI", "Labor Day"), hol("2026-05-14", "THU", "Ascension Day"), hol("2026-05-25", "MON", "Pentecost Monday"), hol("2026-10-03", "SAT", "German Unity Day"), hol("2026-12-25", "FRI", "Christmas Day"), hol("2026-12-26", "SAT", "Second Day of Christmas")].map(h => ({ ...h, scope: "national" })),
+    regional: [hol("2026-01-06", "TUE", "Epiphany", { regions: ["Augsburg", "BW", "BY", "ST"] }), hol("2026-03-08", "SUN", "Women's Day", { regions: ["BE", "MV"] }), hol("2026-04-05", "SUN", "Easter Sunday", { regions: ["BB"] }), hol("2026-05-24", "SUN", "Pentecost", { regions: ["BB"] }), hol("2026-06-04", "THU", "Corpus Christi", { regions: ["Augsburg", "BW", "BY", "HE", "NW", "RP", "SL"] }), hol("2026-08-08", "SAT", "Augsburg Peace Festival", { regions: ["Augsburg"] }), hol("2026-08-15", "SAT", "Assumption Day", { regions: ["Augsburg", "SL"] }), hol("2026-09-20", "SUN", "World Children's Day", { regions: ["TH"] }), hol("2026-10-31", "SAT", "Reformation Day", { regions: ["BB", "HB", "HH", "MV", "NI", "SH", "SN", "ST", "TH"] }), hol("2026-11-01", "SUN", "All Saints' Day", { regions: ["Augsburg", "BW", "BY", "NW", "RP", "SL"] }), hol("2026-11-18", "WED", "Repentance and Prayer Day", { regions: ["SN"] })],
+    weekend_workdays: [], weekend: ["SAT", "SUN"], warnings: [], data: D },
+    text: "Germany · 2026 · 9 national holidays\n  Thu 2026-01-01  New Year's Day\n  Fri 2026-04-03  Good Friday\n  Mon 2026-04-06  Easter Monday\n  Fri 2026-05-01  Labor Day\n  Thu 2026-05-14  Ascension Day\n  Mon 2026-05-25  Pentecost Monday\n  Sat 2026-10-03  German Unity Day\n  Fri 2026-12-25  Christmas Day\n  Sat 2026-12-26  Second Day of Christmas\nRegional:\n  Tue 2026-01-06  Epiphany                   Augsburg, BW, BY, ST\n  Sun 2026-03-08  Women's Day                BE, MV\n  Sun 2026-04-05  Easter Sunday              BB\n  Sun 2026-05-24  Pentecost                  BB\n  Thu 2026-06-04  Corpus Christi             Augsburg, BW, BY, HE, NW, RP, SL\n  Sat 2026-08-08  Augsburg Peace Festival    Augsburg\n  Sat 2026-08-15  Assumption Day             Augsburg, SL\n  Sun 2026-09-20  World Children's Day       TH\n  Sat 2026-10-31  Reformation Day            BB, HB, HH, MV, NI, SH, SN, ST, TH\n  Sun 2026-11-01  All Saints' Day            Augsburg, BW, BY, NW, RP, SL\n  Wed 2026-11-18  Repentance and Prayer Day  SN\npython-holidays 0.107 (2026-10-19)\n" },
+  "2026-10-27": { op: "convert", result: { input: "2026-10-27", from: "gregorian", gregorian: { date: "2026-10-27", weekday: "TUE", iso_week: "2026-W44", day_of_year: 300 },
+    dates: [
+      { calendar: "islamic-umalqura", text: "16 Jumada al-Ula 1448 AH", note: "Saudi Arabia's official Umm al-Qura calendar. Religious dates set by moon sighting can differ by a day, and more in other countries." },
+      { calendar: "islamic-civil", text: "15 Jumada al-Ula 1448 AH", note: "Tabular Islamic calendar (Friday epoch, 30-year cycle); usually 0-2 days from Umm al-Qura." },
+      { calendar: "hebrew", text: "16 Cheshvan 5787", note: null },
+      { calendar: "chinese", text: "Month 9, day 18, year of the Horse (Bing-Wu)", note: null },
+      { calendar: "persian", text: "5 Aban 1405 SH", note: null },
+      { calendar: "bikram-sambat", text: "10 Kartik 2083 BS", note: null }],
+    warnings: [], data: D },
+    text: "Gregorian              Tue 2026-10-27 · week 2026-W44 · day 300\nIslamic (Umm al-Qura)  16 Jumada al-Ula 1448 AH\n                       Saudi Arabia's official Umm al-Qura calendar. Religious dates set by moon sighting can differ by a day, and more in other countries.\nIslamic (tabular)      15 Jumada al-Ula 1448 AH\n                       Tabular Islamic calendar (Friday epoch, 30-year cycle); usually 0-2 days from Umm al-Qura.\nHebrew                 16 Cheshvan 5787\nChinese                Month 9, day 18, year of the Horse (Bing-Wu)\nPersian                5 Aban 1405 SH\nBikram Sambat          10 Kartik 2083 BS\nicu_calendar 2.4.0 · nepali-datetime 1.0.8.5 (2026-05-07)\n" },
+};
+const REGIONS = {
+  DE: [["BB", "Brandenburg"], ["BE", "Berlin"], ["BW", "Baden-Württemberg"], ["BY", "Bayern"], ["HB", "Bremen"], ["HE", "Hessen"], ["HH", "Hamburg"], ["MV", "Mecklenburg-Vorpommern"], ["NI", "Niedersachsen"], ["NW", "Nordrhein-Westfalen"], ["RP", "Rheinland-Pfalz"], ["SH", "Schleswig-Holstein"], ["SL", "Saarland"], ["SN", "Sachsen"], ["ST", "Sachsen-Anhalt"], ["TH", "Thüringen"], ["Augsburg"]],
+  GB: [["ENG", "England"], ["NIR", "Northern Ireland"], ["SCT", "Scotland"], ["WLS", "Wales"]],
+};
+const COUNTRIES = [["AE", "United Arab Emirates"], ["CN", "China"], ["DE", "Germany"], ["GB", "United Kingdom"], ["IN", "India"], ["JP", "Japan"], ["US", "United States"]];
+
+// Sample answers in the shapes `date-calc ui` returns: {op, result, text} or {error}.
+async function api(body) {
+  if (body.op === "countries") {
+    if (!body.country) return { op: "countries", result: { countries: COUNTRIES.map(([code, name]) => ({ code, name })), data: D } };
+    const c = COUNTRIES.find(([code, name]) => [code, name].some(s => s.toLowerCase() === body.country.toLowerCase()));
+    if (!c) return { error: { code: "unknown_country", message: `Unknown country: '${body.country}'.`, hint: "Use an ISO code such as DE or DEU, or run: date-calc countries" } };
+    return { op: "countries", result: { code: c[0], name: c[1], regions: (REGIONS[c[0]] ?? []).map(([code, ...names]) => ({ code, names })), data: D } };
+  }
+  return SAMPLES[body.query.trim()] ?? { error: { code: "bad_query", message: `Couldn't read '${body.query}'.`, hint: "Try: 2026-02-01 to 2026-02-28 · 2026-11-02 +10 · 2027 · 2026-10-27 · 1 Ramadan 1448" } };
+}
+
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const day = d => `${DAYS[new Date(d.slice(0, 10) + "T00:00Z").getUTCDay()]} ${d.slice(0, 10)}`;
+const when = s => s.length > 10 ? `${day(s)} ${s.slice(11, s.slice(16, 19) === ":00" ? 16 : 19)} ${s.slice(19)}`.trimEnd() : day(s);
+const count = (n, word) => `${n} ${word}${Math.abs(n) === 1 ? "" : "s"}`;
+const place = r => !r.country ? "No country" : r.country.name + (r.region ? `, ${r.region.name}${r.region.name === r.region.code ? "" : ` (${r.region.code})`}` : "");
+const flags = h => [h.observed && "observed", h.estimated && "estimated", h.scope === "regional" && "regional", h.except_regions && `not in ${h.except_regions.join(", ")}`].filter(Boolean).join(", ");
+const table = rows => `<table>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</table>`;
+const dayCell = d => `<span class="mono">${day(d)}</span>`;
+const holidayRows = list => list.map(h => [dayCell(h.date), esc(h.name), `<span class="dim">${esc(flags(h))}</span>`]);
+const lines = (...ls) => `<p class="muted">${ls.filter(Boolean).map(esc).join("<br>")}</p>`;
+const big = (value, words) => `<p class="big">${esc(value)}${words ? ` <span>${esc(words)}</span>` : ""}</p>`;
+const ENDS = ["ends not counted", "start not counted", "end not counted", "both counted"];
+const UNITS = { business_days: "business day", days: "day", weeks: "week", months: "month", years: "year", business_hours: "business hour" };
+const CALENDARS = { gregorian: "Gregorian", "islamic-umalqura": "Islamic (Umm al-Qura)", "islamic-civil": "Islamic (tabular)", hebrew: "Hebrew", chinese: "Chinese", persian: "Persian", "bikram-sambat": "Bikram Sambat" };
+
+// Each view returns [headline, details] for one operation's result.
+const VIEWS = {
+  between: r => [big(r.business_days, count(r.business_days, "business day").replace(/^\S+ /, "")),
+    lines(`${r.start} to ${r.end} (${ENDS[2 * r.include_start + r.include_end]}) · ${place(r)}`,
+      `${count(r.calendar_days, "day")}: ${r.weekend_days} weekend, ${count(r.holiday_days, "holiday")} · ${count(Math.abs(r.elapsed_days), "day")} apart`)
+    + (r.holidays.length ? table(holidayRows(r.holidays)) : "")],
+  add: r => {
+    const rolled = r.unit !== "business_days" && r.unit !== "business_hours";
+    const n = r.skipped.length + (r.skipped_more ?? 0);
+    return [big(when(r.result)),
+      lines(`${count(Math.abs(r.amount), UNITS[r.unit])} ${r.amount < 0 ? "before" : "after"} ${when(r.start)} · ${place(r)}`, r.hours && `Hours ${r.hours} · ${r.timezone ?? "clock time"}`)
+      + (n ? `<p class="sub">${rolled ? `Rolled ${r.roll} past` : "Skipped"} ${count(n, "day")}</p>`
+        + table(r.skipped.map(s => [dayCell(s.date), s.reason === "weekend" ? `<span class="dim">weekend</span>` : esc(s.name)]))
+        + (r.skipped_more ? lines(`and ${r.skipped_more} more`) : "") : "")];
+  },
+  hours: r => [big(r.duration, `business hours (${r.business_hours.toFixed(2)} h)`),
+    lines(`${when(r.start)} to ${when(r.end)} · ${place(r)}`, `Hours ${r.hours} on ${count(r.business_days, "business day")} · ${r.timezone ?? "clock time"}`)
+    + (r.holidays.length ? table(holidayRows(r.holidays)) : "")],
+  holidays: r => [big(r.holidays.length, r.region ? "holidays" : "national holidays"),
+    lines(`${place(r)} · ${r.from.endsWith("-01-01") && r.to === r.from.slice(0, 4) + "-12-31" ? r.from.slice(0, 4) : `${r.from} to ${r.to}`}`)
+    + table(holidayRows(r.holidays))
+    + (r.regional.length ? `<p class="sub">Only in some regions</p>` + table(r.regional.map(h => [dayCell(h.date), esc(h.name), `<span class="dim">${esc(h.regions.join(", "))}</span>`])) : "")],
+  convert: r => [big(day(r.gregorian.date)),
+    lines(`${r.from === "gregorian" ? "" : `${r.input}, ${CALENDARS[r.from]} · `}Week ${r.gregorian.iso_week} · day ${r.gregorian.day_of_year} of the year`)
+    + table(r.dates.map(d => [`<span class="dim">${CALENDARS[d.calendar]}</span>`, esc(d.text) + (d.note ? `<span class="note">${esc(d.note)}</span>` : "")]))],
+};
+
+function done({ op, result: r, text }) {
+  const [headline, details] = VIEWS[op](r);
+  out.dataset.text = text;
+  out.innerHTML = `<div class="head">${headline}<div class="acts"><button type="button" data-copy>${COPY}Copy</button><button type="button" data-save>${SAVE}Save</button></div></div>`
+    + details
+    + (r.weekend_workdays?.length ? lines(`Worked weekend days: ${r.weekend_workdays.map(day).join(", ")}`) : "")
+    + (r.warnings.length ? `<ul>${r.warnings.map(w => `<li>${WARN}<span>${esc(w.message)}</span></li>`).join("")}</ul>` : "")
+    + `<p class="data">${esc(op === "convert" ? `${r.data.calendars} · ${r.data.bikram_sambat}` : r.data.holidays + (r.timezone ? ` · tzdata ${r.data.tzdata}` : ""))}</p>`;
+}
+
+const failure = e => `<p class="err">${FAIL}<span>${esc(e.message)}</span></p>` + (e.hint ? `<p class="hint">${esc(e.hint)}</p>` : "");
+
+let latest = 0, wait;
+form.addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const run = ++latest;
+  const body = { query: query.value, include_start: $("#include_start").checked, include_end: $("#include_end").checked };
+  for (const id of ["country", "region", "weekend", "hours", "timezone"]) if ($("#" + id).value.trim()) body[id] = $("#" + id).value.trim();
+  // One loading timer for the newest submit only, so an older one can't cover its result.
+  clearTimeout(wait);
+  wait = setTimeout(() => {
+    out.setAttribute("aria-busy", "true");
+    out.innerHTML = `<div class="bar" role="progressbar" aria-label="Working"></div><p class="muted">Calculating…</p>`;
+  }, 150);
+  let a;
+  try { a = await api(body); } catch { a = { error: { message: "Can't reach date-calc.", hint: "Start it again with: date-calc ui" } }; }
+  if (run !== latest) return;
+  clearTimeout(wait);
+  out.removeAttribute("aria-busy");
+  if (a.error) out.innerHTML = failure(a.error); else done(a);
+});
+
+country.addEventListener("change", async () => {
+  region.value = "";
+  region.disabled = true;
+  $("#regions").innerHTML = "";
+  const value = country.value.trim();
+  const a = value && await api({ op: "countries", country: value }).catch(() => null);
+  if (a?.result?.regions?.length && value === country.value.trim()) {
+    $("#regions").innerHTML = options(a.result.regions, x => x.code, x => x.names.join(", ") || x.code);
+    region.disabled = false;
+  }
+});
+
+out.addEventListener("click", async ev => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  if (b.dataset.ex) {
+    query.value = b.dataset.ex;
+    country.value = b.dataset.country;
+    country.dispatchEvent(new Event("change"));
+    form.requestSubmit();
+    return;
+  }
+  if (b.hasAttribute("data-save")) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([out.dataset.text], { type: "text/plain" }));
+    a.download = "date-calc.txt";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    return;
+  }
+  const label = b.lastChild;
+  try { await navigator.clipboard.writeText(out.dataset.text); label.textContent = "Copied"; }
+  catch { label.textContent = "Can't copy"; }
+  setTimeout(() => { label.textContent = "Copy"; }, 1500);
+});
+
+addEventListener("keydown", ev => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "o") { ev.preventDefault(); query.focus(); query.select(); }
+});
+
+$("#zones").innerHTML = options(["UTC", ...(Intl.supportedValuesOf?.("timeZone") ?? [])], z => z, z => z);
+api({ op: "countries" }).then(a => { $("#countries").innerHTML = options(a.result.countries, c => c.code, c => c.name); }, () => {});
+</script>
+</body>
+</html>
