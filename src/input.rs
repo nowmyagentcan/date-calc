@@ -1,8 +1,9 @@
-//! Reading the values people type: dates, weekends and amounts.
+//! Reading the values people type: dates, date-times, weekends, working hours and amounts.
 
-use jiff::civil::Date;
+use jiff::civil::{Date, Time};
 
 use crate::error::Error;
+use crate::hours::{DAY, Moment, Window};
 
 /// Weekday names from Monday, as text output writes them.
 pub const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -31,6 +32,87 @@ pub fn date(text: &str) -> Result<Date, Error> {
         ));
     }
     Date::new(y.parse().unwrap(), m.parse().unwrap(), d.parse().unwrap()).map_err(|_| bad())
+}
+
+/// `HH:MM`, or `HH:MM:SS` when `seconds` allows it, as seconds from midnight.
+fn clock(text: &str, seconds: bool) -> Option<i32> {
+    let parts: Vec<_> = text.split(':').collect();
+    let two_digits = |p: &&str| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit());
+    if !(parts.len() == 2 || seconds && parts.len() == 3) || !parts.iter().all(two_digits) {
+        return None;
+    }
+    let n: Vec<i32> = parts.iter().map(|p| p.parse().unwrap()).collect();
+    let valid = n[0] < 24 && n[1..].iter().all(|&x| x < 60);
+    valid.then(|| n[0] * 3600 + n[1] * 60 + n.get(2).unwrap_or(&0))
+}
+
+/// A date (meaning 00:00), `YYYY-MM-DDTHH:MM[:SS]` with `T` or a space, or `now`, as clock time.
+pub fn datetime(text: &str) -> Result<Moment, Error> {
+    let bad = || {
+        Error::new("bad_datetime", format!("Not a date and time: '{text}'.")).hint(
+            "Use YYYY-MM-DDTHH:MM, e.g. 2026-11-02T09:30, optionally with Z or an offset, or now.",
+        )
+    };
+    if text.eq_ignore_ascii_case("now") {
+        let now = jiff::Zoned::now().datetime();
+        return Ok(Moment::Civil(
+            now.with().subsec_nanosecond(0).build().unwrap(),
+        ));
+    }
+    let (day, time) = match text.get(10..11) {
+        Some("T" | "t" | " ") => (&text[..10], Some(&text[11..])),
+        _ => (text, None),
+    };
+    let day = date(day).map_err(|e| if e.code == "bad_date" { bad() } else { e })?;
+    let at = match time {
+        None => 0,
+        Some(time) => clock(time, true).ok_or_else(bad)?,
+    };
+    let midnight = day.to_datetime(Time::midnight());
+    Ok(Moment::Civil(
+        midnight + jiff::SignedDuration::from_secs(at.into()),
+    ))
+}
+
+/// Working hours: `HH:MM-HH:MM` windows separated by commas, `24:00` allowed as an end; a window
+/// ending before it starts runs past midnight. Sorted by start; windows may not overlap.
+pub fn hours(text: &str) -> Result<Vec<Window>, Error> {
+    let bad = || {
+        Error::new("bad_hours", format!("Not working hours: '{text}'."))
+            .hint("Use HH:MM-HH:MM, several separated by commas, e.g. 09:00-12:00,13:00-17:00.")
+    };
+    let window = |w: &str| {
+        let (a, b) = w.split_once('-')?;
+        let start = clock(a.trim(), false)?;
+        let end = match b.trim() {
+            "24:00" => DAY,
+            b => clock(b, false)?,
+        };
+        let end = if end < start { end + DAY } else { end };
+        (start != end).then_some(Window { start, end })
+    };
+    let mut windows: Vec<_> = text
+        .split(',')
+        .map(window)
+        .collect::<Option<_>>()
+        .ok_or_else(bad)?;
+    windows.sort_by_key(|w| w.start);
+    // Every day repeats the windows, so they must not meet on a 24-hour circle either.
+    for (i, a) in windows.iter().enumerate() {
+        for b in &windows[i + 1..] {
+            if [-DAY, 0, DAY]
+                .iter()
+                .any(|k| a.start < b.end + k && b.start + k < a.end)
+            {
+                return Err(Error::new(
+                    "overlapping_hours",
+                    format!("Working hours overlap: {a} and {b}."),
+                )
+                .hint("Give windows that don't overlap, in any order."));
+            }
+        }
+    }
+    Ok(windows)
 }
 
 /// Day names (`SAT,SUN`, `fri,saturday`), a 7-digit mask from Monday with 1 = day off
@@ -190,6 +272,95 @@ mod tests {
             );
             assert_eq!(e.hint, None);
         }
+    }
+
+    #[test]
+    fn reads_clock_date_times() {
+        let civil = |text| match datetime(text) {
+            Ok(Moment::Civil(dt)) => dt,
+            other => panic!("{text}: {other:?}"),
+        };
+        let at = |h, m, s| ymd(2026, 11, 2).at(h, m, s, 0);
+        assert_eq!(civil("2026-11-02T09:30"), at(9, 30, 0));
+        assert_eq!(civil("2026-11-02 09:30:15"), at(9, 30, 15));
+        assert_eq!(civil("2026-11-02t23:59:59"), at(23, 59, 59));
+        assert_eq!(civil("2026-11-02"), at(0, 0, 0));
+        assert_eq!(civil("9999-12-31T23:59").date(), ymd(9999, 12, 31));
+        assert_eq!(civil("NOW").subsec_nanosecond(), 0);
+        for text in [
+            "2026-11-02T",
+            "2026-11-02T9:30",
+            "2026-11-02T24:00",
+            "2026-11-02T09:60",
+            "2026-11-02T09:30:5",
+            "2026-11-02X09:30",
+            "2026-11-31T09:30",
+            "x",
+        ] {
+            let e = datetime(text).unwrap_err();
+            assert_eq!(e.code, "bad_datetime", "{text}");
+            assert_eq!(e.message, format!("Not a date and time: '{text}'."));
+            assert_eq!(
+                e.hint.as_deref(),
+                Some(
+                    "Use YYYY-MM-DDTHH:MM, e.g. 2026-11-02T09:30, optionally with Z or an offset, or now."
+                )
+            );
+        }
+        assert_eq!(
+            datetime("0000-01-01T10:00").unwrap_err().code,
+            "date_out_of_range"
+        );
+    }
+
+    #[test]
+    fn reads_working_hours() {
+        let w = |start, end| Window { start, end };
+        assert_eq!(hours("09:00-17:00"), Ok(vec![w(32_400, 61_200)]));
+        assert_eq!(
+            hours("13:00-17:00, 09:00-12:00"),
+            Ok(vec![w(32_400, 43_200), w(46_800, 61_200)])
+        );
+        assert_eq!(hours("00:00-24:00"), Ok(vec![w(0, DAY)]));
+        assert_eq!(hours("22:00-06:00"), Ok(vec![w(79_200, 108_000)]));
+        let shown: Vec<_> = hours("22:00-06:00,09:00-17:00")
+            .unwrap()
+            .iter()
+            .map(Window::to_string)
+            .collect();
+        assert_eq!(
+            shown,
+            ["09:00-17:00", "22:00-06:00"].map(String::from).to_vec()
+        );
+        for text in [
+            "",
+            "9:00-17:00",
+            "09:00-09:00",
+            "24:00-08:00",
+            "09:00-24:30",
+            "09:00",
+            "09:00-17:00,",
+            "+9:00-17:00",
+            "09:00-17:60",
+        ] {
+            let e = hours(text).unwrap_err();
+            assert_eq!(e.code, "bad_hours", "{text}");
+            assert_eq!(e.message, format!("Not working hours: '{text}'."));
+        }
+        for (text, message) in [
+            ("09:00-12:00,11:00-17:00", "09:00-12:00 and 11:00-17:00"),
+            ("22:00-06:00,05:00-08:00", "05:00-08:00 and 22:00-06:00"),
+            ("00:00-24:00,09:00-10:00", "00:00-24:00 and 09:00-10:00"),
+        ] {
+            let e = hours(text).unwrap_err();
+            assert_eq!(e.code, "overlapping_hours");
+            assert_eq!(e.message, format!("Working hours overlap: {message}."));
+            assert_eq!(
+                e.hint.as_deref(),
+                Some("Give windows that don't overlap, in any order.")
+            );
+        }
+        assert!(hours("09:00-24:00,00:00-01:00").is_ok());
     }
 
     #[test]

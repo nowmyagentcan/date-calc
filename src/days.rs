@@ -173,18 +173,18 @@ impl Place {
     }
 
     /// Fails with `no_holiday_data` for a date outside the country's data years.
-    fn covers(&self, date: Date) -> Result<(), Error> {
+    pub(crate) fn covers(&self, date: Date) -> Result<(), Error> {
         self.block.as_ref().map_or(Ok(()), |b| b.covers(date))
     }
 
     /// The holidays kept from `from` to `to`, both included.
-    fn holidays(&self, from: Date, to: Date) -> Vec<Entry> {
+    pub(crate) fn holidays(&self, from: Date, to: Date) -> Vec<Entry> {
         let Some(b) = &self.block else { return vec![] };
         b.holidays(self.region, from, to).map(Entry::from).collect()
     }
 
     /// Weekend days worked by decree from `from` to `to`, both included.
-    fn workdays(&self, from: Date, to: Date) -> Vec<Date> {
+    pub(crate) fn workdays(&self, from: Date, to: Date) -> Vec<Date> {
         let Some(b) = &self.block else { return vec![] };
         b.decree_workdays(self.region, from, to).collect()
     }
@@ -430,7 +430,7 @@ fn warning(code: &'static str, message: String) -> Option<Warning> {
 }
 
 /// The warnings for counting business days from `from` to `to` with `holidays` in range.
-fn day_warnings(
+pub(crate) fn day_warnings(
     place: &Place,
     from: Date,
     to: Date,
