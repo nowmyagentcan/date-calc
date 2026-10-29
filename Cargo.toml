@@ -1,0 +1,15 @@
+[package]
+name = "date-calc"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Count business days with official public holidays and convert dates between calendars"
+repository = "https://github.com/nowmyagentcan/date-calc"
+publish = false
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
