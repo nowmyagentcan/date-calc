@@ -30,7 +30,6 @@ fn run(line: &str) -> (i32, String) {
     assert_eq!(words[0], "date-calc", "{line}");
     let out = Command::new(env!("CARGO_BIN_EXE_date-calc"))
         .args(&words[1..])
-        .env_remove("NO_COLOR")
         .env_remove("CLICOLOR_FORCE")
         .stdin(Stdio::null())
         .output()
@@ -54,35 +53,24 @@ fn blocks() -> Vec<(&'static str, &'static str)> {
 }
 
 #[test]
-fn every_example_runs() {
-    let mut ran = 0;
+fn every_example_runs_as_shown() {
+    let (mut commands, mut outputs) = (0, 0);
     for (lang, body) in blocks() {
-        if lang != "sh" {
-            continue;
-        }
-        for line in body.lines().filter(|l| l.starts_with("date-calc ")) {
-            let (code, out) = run(line);
-            assert_eq!(code, 0, "{line}");
-            if line.contains("--json") {
-                serde_json::from_str::<serde_json::Value>(&out).expect(line);
+        if lang == "text" {
+            let (line, expected) = body.split_once('\n').unwrap();
+            let (code, out) = run(line.strip_prefix("$ ").unwrap());
+            assert_eq!((code, out.as_str()), (0, expected), "{line}");
+            outputs += 1;
+        } else if lang == "sh" {
+            for line in body.lines().filter(|l| l.starts_with("date-calc ")) {
+                let (code, out) = run(line);
+                assert_eq!(code, 0, "{line}");
+                if line.contains("--json") {
+                    serde_json::from_str::<serde_json::Value>(&out).expect(line);
+                }
+                commands += 1;
             }
-            ran += 1;
         }
     }
-    assert_eq!(ran, 11);
-}
-
-#[test]
-fn every_pasted_output_matches() {
-    let mut ran = 0;
-    for (lang, body) in blocks() {
-        if lang != "text" {
-            continue;
-        }
-        let (line, expected) = body.split_once('\n').unwrap();
-        let (code, out) = run(line.strip_prefix("$ ").unwrap());
-        assert_eq!((code, out.as_str()), (0, expected), "{line}");
-        ran += 1;
-    }
-    assert_eq!(ran, 2);
+    assert_eq!((commands, outputs), (11, 2));
 }
