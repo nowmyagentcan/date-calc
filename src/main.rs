@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::io::{self, IsTerminal};
+use std::io::{self, ErrorKind, IsTerminal, Write};
 use std::process::ExitCode;
 use std::sync::LazyLock;
 
@@ -171,6 +171,9 @@ struct Out {
     /// Print one JSON object
     #[arg(long, display_order = 100)]
     json: bool,
+    /// Show the cause of an error
+    #[arg(long, display_order = 100)]
+    debug: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -198,8 +201,8 @@ enum RollArg {
 }
 
 impl Command {
-    /// The operation, its options, and whether to print JSON.
-    fn into_op(self) -> (Op, Options, bool) {
+    /// The operation and its options.
+    fn into_op(self) -> (Op, Options) {
         let mut o = Options::default();
         let mut set = |p: Place, clock: Option<Clock>| {
             (o.country, o.region, o.weekend) = (p.country, p.region, p.weekend);
@@ -207,18 +210,18 @@ impl Command {
                 (o.hours, o.timezone) = (Some(c.hours), c.tz);
             }
         };
-        let (op, json) = match self {
+        let op = match self {
             Command::Between {
                 start,
                 end,
                 place,
                 exclude_start,
                 exclude_end,
-                out,
+                ..
             } => {
                 set(place, None);
                 (o.exclude_start, o.exclude_end) = (exclude_start, exclude_end);
-                (Op::Between { start, end }, out.json)
+                Op::Between { start, end }
             }
             Command::Add {
                 start,
@@ -227,7 +230,7 @@ impl Command {
                 roll,
                 place,
                 clock,
-                out,
+                ..
             } => {
                 set(place, Some(clock));
                 let unit = match unit {
@@ -245,23 +248,22 @@ impl Command {
                     RollArg::ModifiedFollowing => Roll::ModifiedFollowing,
                     RollArg::ModifiedPreceding => Roll::ModifiedPreceding,
                 };
-                let op = Op::Add {
+                Op::Add {
                     start,
                     amount,
                     unit,
                     roll,
-                };
-                (op, out.json)
+                }
             }
             Command::Hours {
                 start,
                 end,
                 place,
                 clock,
-                out,
+                ..
             } => {
                 set(place, Some(clock));
-                (Op::Hours { start, end }, out.json)
+                Op::Hours { start, end }
             }
             Command::Holidays {
                 country,
@@ -269,26 +271,21 @@ impl Command {
                 from,
                 to,
                 region,
-                out,
+                ..
             } => {
                 (o.country, o.region) = (Some(country), region);
-                (Op::Holidays { year, from, to }, out.json)
+                Op::Holidays { year, from, to }
             }
-            Command::Convert {
-                date,
-                from,
-                to,
-                out,
-            } => {
+            Command::Convert { date, from, to, .. } => {
                 let date = date.join(" ");
-                (Op::Convert { date, from, to }, out.json)
+                Op::Convert { date, from, to }
             }
-            Command::Countries { country, out } => {
+            Command::Countries { country, .. } => {
                 o.country = country;
-                (Op::Countries, out.json)
+                Op::Countries
             }
         };
-        (op, o, json)
+        (op, o)
     }
 }
 
@@ -310,7 +307,7 @@ fn check(args: &[OsString]) -> Result<(), Error> {
 }
 
 /// Parses the command line; with `--json`, clap's complaint comes back as the error object.
-fn parse(args: &[OsString]) -> Result<(Op, Options, bool), Error> {
+fn parse(args: &[OsString]) -> Result<(Op, Options), Error> {
     check(args)?;
     match Cli::try_parse_from(args) {
         Ok(cli) => Ok(cli.command.into_op()),
@@ -328,27 +325,63 @@ fn parse(args: &[OsString]) -> Result<(Op, Options, bool), Error> {
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().collect();
-    let json = args.iter().any(|a| a == "--json");
-    let answer = parse(&args).and_then(|(op, o, _)| report::run(&op, &o));
-    match answer {
-        Ok(answer) if json => {
-            let out = serde_json::to_string(&answer).expect("answers are plain data");
-            anstream::println!("{out}");
-            ExitCode::SUCCESS
-        }
-        Ok(answer) => {
-            anstream::print!("{}", people(text::answer(&answer), &io::stdout()));
-            ExitCode::SUCCESS
-        }
-        Err(e) if json => {
-            anstream::println!("{}", report::failure(&e));
-            ExitCode::from(e.exit_code())
-        }
+    let flag = |name: &str| args.iter().any(|a| a == name);
+    let (json, debug) = (flag("--json"), flag("--debug"));
+    let (out, code) = match parse(&args).and_then(|(op, o)| report::run(&op, &o)) {
+        Ok(answer) if json => (json_line(&answer), 0),
+        Ok(answer) => (people(text::answer(&answer), &io::stdout()), 0),
         Err(e) => {
-            anstream::eprint!("{}", people(text::error(&e), &io::stderr()));
-            ExitCode::from(e.exit_code())
+            if debug {
+                let _ = writeln!(anstream::stderr(), "debug: {e:?}");
+            }
+            if json {
+                (
+                    report::failure(&e)
+                        + "
+",
+                    e.exit_code(),
+                )
+            } else {
+                fail(&e);
+                (String::new(), e.exit_code())
+            }
+        }
+    };
+    emit(&out, code, debug)
+}
+
+fn json_line(answer: &report::Answer) -> String {
+    serde_json::to_string(answer).expect("answers are plain data")
+        + "
+"
+}
+
+/// Writes the answer to stdout; a closed stdout ends quietly.
+fn emit(out: &str, code: u8, debug: bool) -> ExitCode {
+    let mut stdout = anstream::stdout().lock();
+    match stdout
+        .write_all(out.as_bytes())
+        .and_then(|()| stdout.flush())
+    {
+        Ok(()) => ExitCode::from(code),
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(e) => {
+            if debug {
+                let _ = writeln!(anstream::stderr(), "debug: {e:?}");
+            }
+            fail(&Error::new("io", format!("Couldn't write output: {e}.")));
+            ExitCode::from(3)
         }
     }
+}
+
+/// An error's two lines on stderr; a closed stderr loses them quietly.
+fn fail(e: &Error) {
+    let _ = write!(
+        anstream::stderr(),
+        "{}",
+        people(text::error(e), &io::stderr())
+    );
 }
 
 /// Text for a person, in ASCII when their console can't show Unicode.

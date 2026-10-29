@@ -1,5 +1,6 @@
 //! Runs the built binary the way people and agents do.
 
+use std::io::Read;
 use std::process::{Command, Output, Stdio};
 
 use serde_json::{Value, json};
@@ -650,4 +651,94 @@ fn shows_examples_in_help() {
     assert!(out.starts_with("Count business days, add workdays, list holidays, convert dates.\n"));
     let (_, out, _) = run(&["add", "--help"]);
     assert!(out.contains("[default: 09:00-17:00]"));
+}
+
+/// One run of every command, with lots of output so a closed pipe is hit.
+const EVERY_COMMAND: &[&[&str]] = &[
+    &["between", "2000-01-01", "2050-12-31", "-c", "DE"],
+    &["add", "2000-01-03", "12000", "-c", "US"],
+    &["hours", "2026-01-01", "2026-12-31", "-c", "US"],
+    &[
+        "holidays",
+        "US",
+        "--from",
+        "2000-01-01",
+        "--to",
+        "2050-12-31",
+    ],
+    &["convert", "2026-10-27"],
+    &["countries"],
+    &["between", "bad", "2026-01-01"],
+    &["add", "2026-01-01", "1", "--frobnicate"],
+    &["--help"],
+];
+
+#[test]
+fn ends_quietly_when_stdout_closes() {
+    for &args in EVERY_COMMAND {
+        for extra in [&[][..], &["--json"], &["--debug"], &["--json", "--debug"]] {
+            let args = [args, extra].concat();
+            let mut child = date_calc(&args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            drop(child.stdout.take());
+            let mut err = String::new();
+            child
+                .stderr
+                .take()
+                .unwrap()
+                .read_to_string(&mut err)
+                .unwrap();
+            let code = child.wait().unwrap().code();
+            assert!(!err.contains("panicked"), "{args:?}: {err}");
+            if !err.contains("bad") && !err.contains("frobnicate") {
+                assert_eq!((code, err.as_str()), (Some(0), ""), "{args:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn answers_even_when_stderr_closes() {
+    for &args in EVERY_COMMAND {
+        for extra in [&[][..], &["--json", "--debug"], &["--debug"]] {
+            let args = [args, extra].concat();
+            let want = date_calc(&args).output().unwrap();
+            let mut child = date_calc(&args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            drop(child.stderr.take());
+            let mut out = Vec::new();
+            child.stdout.take().unwrap().read_to_end(&mut out).unwrap();
+            let code = child.wait().unwrap().code();
+            assert_eq!((code, out), (want.status.code(), want.stdout), "{args:?}");
+        }
+    }
+}
+
+#[test]
+fn shows_the_cause_with_debug() {
+    let (code, out, err) = run(&["between", "2026-13-01", "2026-12-01", "--debug"]);
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert!(
+        err.starts_with("debug: Error { code: \"bad_date\""),
+        "{err}"
+    );
+    assert!(
+        err.ends_with(
+            "✗ Not a date: '2026-13-01'.\n  Use YYYY-MM-DD, e.g. 2026-02-01, or today.\n"
+        )
+    );
+    let (code, v) = json(&["countries", "XX"]);
+    assert_eq!((code, &v["error"]["code"]), (1, &json!("unknown_country")));
+    let (_, out, err) = run(&["countries", "XX", "--json", "--debug"]);
+    assert!(
+        err.starts_with("debug: Error { code: \"unknown_country\""),
+        "{err}"
+    );
+    assert!(out.starts_with("{\"error\":"));
 }
