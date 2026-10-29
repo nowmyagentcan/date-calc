@@ -678,12 +678,15 @@ fn ends_quietly_when_stdout_closes() {
     for &args in EVERY_COMMAND {
         for extra in [&[][..], &["--json"], &["--debug"], &["--json", "--debug"]] {
             let args = [args, extra].concat();
+            // Closed before the child starts: closing it after could lose the race to an
+            // answer that is already written.
+            let (reader, writer) = std::io::pipe().unwrap();
+            drop(reader);
             let mut child = date_calc(&args)
-                .stdout(Stdio::piped())
+                .stdout(writer)
                 .stderr(Stdio::piped())
                 .spawn()
                 .unwrap();
-            drop(child.stdout.take());
             let mut err = String::new();
             child
                 .stderr
