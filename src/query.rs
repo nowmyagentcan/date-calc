@@ -123,9 +123,10 @@ fn is_amount(word: &str) -> bool {
         .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// The unit words after an amount; none means business days. Hours are business hours.
+/// The unit words after an amount; none means business days. Hours are business hours, and
+/// the CLI's spellings (`business-hours`, `business_days`) work too.
 fn unit(words: &[&str]) -> Option<Unit> {
-    Some(match words.join(" ").as_str() {
+    Some(match words.join(" ").replace(['-', '_'], " ").as_str() {
         "" | "bd" | "business day" | "business days" | "workday" | "workdays" => Unit::BusinessDays,
         "d" | "day" | "days" => Unit::Days,
         "w" | "week" | "weeks" => Unit::Weeks,
@@ -258,6 +259,14 @@ mod tests {
                 add("2026-11-02T16:00", "1.5", BusinessHours),
             ),
             ("today +1", add("today", "+1", BusinessDays)),
+            (
+                "2026-11-02 11:00 +1.5 business-hours",
+                add("2026-11-02 11:00", "+1.5", BusinessHours),
+            ),
+            (
+                "2026-11-02 10 business_days",
+                add("2026-11-02", "10", BusinessDays),
+            ),
         ] {
             assert_eq!(parse(line), Ok(op), "{line}");
         }
