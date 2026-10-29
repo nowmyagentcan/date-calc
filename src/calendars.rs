@@ -1,7 +1,9 @@
 //! Dates in other calendars: ICU4X's Umm al-Qura, tabular Islamic, Hebrew, Chinese and Persian
 //! calendars, and Bikram Sambat from nepali-datetime's table.
 
-use icu_calendar::cal::hijri::{TabularAlgorithmEpoch, TabularAlgorithmLeapYears};
+use icu_calendar::cal::hijri::{
+    TabularAlgorithm, TabularAlgorithmEpoch, TabularAlgorithmLeapYears,
+};
 use std::sync::LazyLock;
 
 use icu_calendar::cal::{self as icu, ChineseTraditional, Hijri};
@@ -156,20 +158,6 @@ const BIKRAM_SAMBAT: [&str; 12] = [
     "Baisakh", "Jestha", "Ashar", "Shrawan", "Bhadra", "Asoj", "Kartik", "Mangsir", "Poush",
     "Magh", "Falgun", "Chait",
 ];
-const GREGORIAN: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
 const STEMS: [&str; 10] = [
     "Jia", "Yi", "Bing", "Ding", "Wu", "Ji", "Geng", "Xin", "Ren", "Gui",
 ];
@@ -185,7 +173,7 @@ const ZODIAC: [&str; 12] = [
 fn month_name(cal: Calendar, month: u8, leap: bool, leap_year: bool) -> String {
     let i = usize::from(month).wrapping_sub(1);
     let table = match cal {
-        Gregorian => &GREGORIAN,
+        Gregorian => unreachable!("Gregorian dates stay jiff dates"),
         UmmAlQura | IslamicCivil => &ISLAMIC,
         Hebrew => &HEBREW,
         Persian => &PERSIAN,
@@ -235,6 +223,14 @@ fn icu_fields<C: AsCalendar>(d: icu_calendar::Date<C>) -> (i32, u8, bool, u8, Op
     )
 }
 
+/// The tabular Islamic calendar with the Friday epoch and type II leap years.
+fn tabular() -> Hijri<TabularAlgorithm> {
+    Hijri::new_tabular(
+        TabularAlgorithmLeapYears::TypeII,
+        TabularAlgorithmEpoch::Friday,
+    )
+}
+
 fn iso(g: Date) -> icu_calendar::Date<Iso> {
     icu_calendar::Date::try_new_iso(g.year().into(), g.month() as u8, g.day() as u8)
         .expect("jiff dates are valid ISO dates")
@@ -248,21 +244,8 @@ pub fn in_calendar(cal: Calendar, g: Date) -> Result<CalDate, Error> {
     {
         return Err(cal.out_of_range());
     }
-    let tabular = || {
-        Hijri::new_tabular(
-            TabularAlgorithmLeapYears::TypeII,
-            TabularAlgorithmEpoch::Friday,
-        )
-    };
     let (year, month, leap, day, cyclic, leap_year) = match cal {
-        Gregorian => (
-            g.year().into(),
-            g.month() as u8,
-            false,
-            g.day() as u8,
-            None,
-            false,
-        ),
+        Gregorian => unreachable!("Gregorian dates stay jiff dates"),
         UmmAlQura => icu_fields(iso(g).to_calendar(Hijri::new_umm_al_qura())),
         IslamicCivil => icu_fields(iso(g).to_calendar(tabular())),
         Hebrew => icu_fields(iso(g).to_calendar(icu::Hebrew)),
@@ -318,28 +301,11 @@ pub fn to_gregorian(
     day: u8,
 ) -> Result<Date, Error> {
     let found = match cal {
-        Gregorian => match Date::new(year as i16, month as i8, day as i8) {
-            _ if leap => Err(Invalid::Month),
-            _ if !(1..=9999).contains(&year) => Err(Invalid::Range),
-            Ok(d) => Ok(d),
-            Err(_) if (1..=12).contains(&month) => {
-                let first = date(year as i16, month as i8, 1);
-                Err(Invalid::Day(first.days_in_month() as u8))
-            }
-            Err(_) => Err(Invalid::Month),
-        },
+        Gregorian if leap => Err(Invalid::Month),
+        Gregorian => return crate::input::date(&format!("{year:04}-{month:02}-{day:02}")),
         UmmAlQura if !(1300..=1600).contains(&year) => return Err(cal.out_of_range()),
         UmmAlQura => icu_date(year, month, leap, day, Hijri::new_umm_al_qura()),
-        IslamicCivil => icu_date(
-            year,
-            month,
-            leap,
-            day,
-            Hijri::new_tabular(
-                TabularAlgorithmLeapYears::TypeII,
-                TabularAlgorithmEpoch::Friday,
-            ),
-        ),
+        IslamicCivil => icu_date(year, month, leap, day, tabular()),
         Hebrew => icu_date(year, month, leap, day, icu::Hebrew),
         Chinese => icu_date(year, month, leap, day, ChineseTraditional::new()),
         Persian => icu_date(year, month, leap, day, icu::Persian),
@@ -749,7 +715,6 @@ mod tests {
         assert_eq!(g(Persian, 1405, 1, false, 1), Ok(date(2026, 3, 21)));
         assert_eq!(g(BikramSambat, 2083, 1, false, 1), Ok(date(2026, 4, 14)));
         assert_eq!(g(BikramSambat, 2084, 1, false, 1), Ok(date(2027, 4, 14)));
-        assert_eq!(g(Gregorian, 2026, 10, false, 27), Ok(date(2026, 10, 27)));
         let e = g(UmmAlQura, 1447, 2, false, 30).unwrap_err();
         assert_eq!(
             (e.code, e.message.as_str(), e.hint.as_deref()),
@@ -782,9 +747,10 @@ mod tests {
             hint(BikramSambat, 2083, 1, 32).as_deref(),
             Some("Baisakh 2083 has 31 days.")
         );
+        assert_eq!(g(Gregorian, 2026, 10, false, 27), Ok(date(2026, 10, 27)));
         assert_eq!(
-            hint(Gregorian, 2026, 2, 30).as_deref(),
-            Some("February 2026 has 28 days.")
+            g(Gregorian, 2026, 2, false, 30).unwrap_err().code,
+            "bad_date"
         );
         let e = g(UmmAlQura, 1601, 1, false, 1).unwrap_err();
         assert_eq!(
