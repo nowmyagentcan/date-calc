@@ -122,10 +122,12 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
                 && n.iter()
                     .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(b))
         };
+        // Field values are visible bytes, spaces and tabs (RFC 9110 §5.5).
+        let content = |v: &[u8]| v.iter().all(|&b| b == b'\t' || b >= b' ' && b != 0x7f);
         let Some(colon) = line
             .iter()
             .position(|&b| b == b':')
-            .filter(|&i| token(&line[..i]))
+            .filter(|&i| token(&line[..i]) && content(line[i + 1..].trim_ascii()))
         else {
             return Ok(error(400, "bad_request", "Can't read a request header."));
         };
@@ -143,18 +145,18 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
             }
             _ => continue,
         };
-        let value = String::from_utf8_lossy(&line[colon + 1..]);
+        let value = String::from_utf8_lossy(line[colon + 1..].trim_ascii());
         // A second value could disagree with the first one checked (RFC 9112 §3.2, §6.3).
-        if field.replace(value.trim().to_owned()).is_some() {
+        if field.replace(value.into_owned()).is_some() {
             return Ok(error(400, "bad_request", "A request header is repeated."));
         }
     }
-    // RFC 9112 §3: the request line is ASCII.
-    let request = std::str::from_utf8(&request).ok().filter(|r| r.is_ascii());
-    let mut parts = request
-        .unwrap_or_default()
-        .trim_end_matches(['\r', '\n'])
-        .split(' ');
+    // RFC 9112 §3: the request line is visible ASCII parted by spaces.
+    let request = std::str::from_utf8(&request)
+        .map(|r| r.trim_end_matches(['\r', '\n']))
+        .ok()
+        .filter(|r| r.bytes().all(|b| b == b' ' || b.is_ascii_graphic()));
+    let mut parts = request.unwrap_or_default().split(' ');
     let (Some(method), Some(target), Some("HTTP/1.1" | "HTTP/1.0"), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
     else {

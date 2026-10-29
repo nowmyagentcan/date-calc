@@ -434,7 +434,7 @@ fn refuses_malformed_header_names_framing_and_request_lines() {
 }
 
 #[test]
-fn reads_header_bytes_that_are_not_utf_8() {
+fn reads_opaque_header_bytes_and_refuses_control_bytes() {
     let server = Server::start(&["--no-open"]);
     let body = r#"{"query":"2026-10-27"}"#;
     let status = |line: &[u8], header: &[u8]| {
@@ -457,6 +457,11 @@ fn reads_header_bytes_that_are_not_utf_8() {
         assert_eq!(status(post, &[b"X-Other: ", &[byte][..]].concat()), "200");
     }
     assert_eq!(status(post, b"\xe9: x"), "400");
+    // Control bytes are neither field content nor part of a target (RFC 9110 §5.5, RFC 9112 §3).
+    assert_eq!(status(post, b"X-Other: a\0b"), "400");
+    assert_eq!(status(post, b"X-Other: a\rb"), "400");
+    assert_eq!(status(post, b"X-Other: a\tb"), "200");
+    assert_eq!(status(b"POST /api\tx HTTP/1.1", b"X-Other: a"), "400");
     assert_eq!(status(b"POST /api\xe9 HTTP/1.1", b"X-Other: a"), "400");
     assert_eq!(status(post, b"X-Other: a"), "200");
     let raw = b"{\"query\":\"\xff\"}";
