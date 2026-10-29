@@ -720,6 +720,176 @@ fn answers_even_when_stderr_closes() {
     }
 }
 
+const INITIALIZE: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#;
+
+/// Waits up to 5 s for the child to end by itself; kills it otherwise.
+fn ended(child: &mut std::process::Child) -> Option<i32> {
+    let start = std::time::Instant::now();
+    while start.elapsed().as_secs() < 5 {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status.code();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    None
+}
+
+fn stderr_of(child: &mut std::process::Child) -> String {
+    let mut err = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut err)
+        .unwrap();
+    err
+}
+
+#[test]
+fn servers_end_quietly_when_stdout_closes() {
+    use std::io::Write;
+    for args in [
+        &["ui", "--no-open"][..],
+        &["ui", "--no-open", "--debug"],
+        &["mcp"],
+        &["mcp", "--debug"],
+    ] {
+        let mut child = date_calc(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stdout.take());
+        let mut stdin = child.stdin.take().unwrap();
+        let _ = writeln!(stdin, "{INITIALIZE}");
+        let code = ended(&mut child);
+        drop(stdin);
+        let err = stderr_of(&mut child);
+        assert_eq!((code, err.as_str()), (Some(0), ""), "{args:?}");
+    }
+}
+
+#[test]
+fn mcp_ends_quietly_when_the_client_leaves_mid_session() {
+    use std::io::Write;
+    let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_countries","arguments":{}}}"#;
+    for half_line in [true, false] {
+        let mut child = date_calc(&["mcp"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        writeln!(stdin, "{INITIALIZE}").unwrap();
+        writeln!(
+            stdin,
+            r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#
+        )
+        .unwrap();
+        if half_line {
+            // The client dies halfway through a message.
+            write!(stdin, "{}", &call[..30]).unwrap();
+        } else {
+            // The client stops reading while a large answer is on its way, then leaves.
+            writeln!(stdin, "{call}").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(child.stdout.take());
+        }
+        drop(stdin);
+        let code = ended(&mut child);
+        let err = stderr_of(&mut child);
+        assert!(!err.contains("panicked"), "{err}");
+        assert_eq!(code, Some(0), "{err}");
+    }
+}
+
+#[test]
+fn page_keeps_serving_when_clients_hang_up() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{Shutdown, TcpStream};
+    let mut child = date_calc(&["ui", "--no-open", "--debug"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let port: u16 = line
+        .trim_end()
+        .trim_end_matches("  (Ctrl+C to stop)")
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let body = r#"{"op":"countries"}"#;
+    let request = format!(
+        "POST /api HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let connect = || TcpStream::connect(("127.0.0.1", port)).unwrap();
+    // Leaves after half the headers, after half the body, and before reading the answer.
+    connect().write_all(&request.as_bytes()[..20]).unwrap();
+    connect()
+        .write_all(&request.as_bytes()[..request.len() - 5])
+        .unwrap();
+    for _ in 0..20 {
+        let mut s = connect();
+        s.write_all(request.as_bytes()).unwrap();
+        s.shutdown(Shutdown::Both).unwrap();
+    }
+    let mut s = connect();
+    s.write_all(request.as_bytes()).unwrap();
+    let mut answer = String::new();
+    s.read_to_string(&mut answer).unwrap();
+    assert!(answer.starts_with("HTTP/1.1 200 OK\r\n"), "{answer}");
+    assert!(answer.contains("\"countries\":[{\"code\":\"AD\""));
+    assert_eq!(child.try_wait().unwrap(), None, "the server stopped");
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let err = stderr_of(&mut child);
+    assert_eq!(err, "");
+}
+
+#[test]
+fn servers_run_with_stderr_closed() {
+    use std::io::{BufRead, BufReader};
+    let mut child = date_calc(&["ui", "--no-open", "--debug"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stderr.take());
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    assert!(line.starts_with("Open http://127.0.0.1:"), "{line}");
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let port = line.trim_end().trim_end_matches("  (Ctrl+C to stop)");
+    let port = port.rsplit(':').next().unwrap();
+    let _taken = std::net::TcpListener::bind(("127.0.0.1", port.parse::<u16>().unwrap()));
+    let mut busy = date_calc(&["ui", "--no-open", "--port", port, "--debug"])
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(busy.stderr.take());
+    assert_eq!(ended(&mut busy), Some(3));
+    let out = date_calc(&["mcp", "--debug"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+}
+
 #[test]
 fn shows_the_cause_with_debug() {
     let (code, out, err) = run(&["between", "2026-13-01", "2026-12-01", "--debug"]);
