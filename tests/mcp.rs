@@ -600,11 +600,14 @@ fn answers_fit_their_output_schemas() {
 }
 
 #[test]
-#[ignore = "known bug: F06"]
 fn refuses_a_region_without_a_country() {
     let args = json!({"start": "2026-01-06", "end": "2026-01-06", "region": "BY"});
     let mut messages = handshake();
     messages.push(call(1, "business_days_between", args));
     let (responses, _) = session(&messages);
-    assert_eq!(responses[1]["result"]["isError"], true, "{}", responses[1]);
+    let result = &responses[1]["result"];
+    assert_eq!(result["isError"], true, "{result}");
+    let error: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(error["error"]["code"], "country_required", "{error}");
 }

@@ -153,9 +153,13 @@ impl Place {
         region: Option<&str>,
         weekend: Option<u8>,
     ) -> Result<Self, Error> {
-        let (block, region) = match country {
-            Some(c) => data::find(c, region).map(|(b, r)| (Some(b), r))?,
-            None => (None, None),
+        let (block, region) = match (country, region) {
+            (Some(c), _) => data::find(c, region).map(|(b, r)| (Some(b), r))?,
+            (None, None) => (None, None),
+            (None, Some(_)) => {
+                return Err(Error::new("country_required", "A region needs a country.")
+                    .hint("Add a country, e.g. DE, or give both as DE-BY."));
+            }
         };
         Ok(Self {
             block,

@@ -253,6 +253,11 @@ fn answers_every_query_form_like_the_cli() {
             Some(&["countries", "XX"][..]),
         ),
         (json!({"query": "holidays"}), "country_required", None),
+        (
+            json!({"query": "2026-01-06 to 2026-01-06", "region": "BY"}),
+            "country_required",
+            None,
+        ),
         (json!({"query": ""}), "bad_query", None),
         (json!({"query": "next tuesday"}), "bad_query", None),
         (
