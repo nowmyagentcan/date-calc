@@ -127,6 +127,22 @@ fn edge(d: Date, at: i32, zone: Option<&TimeZone>) -> i64 {
         .map_or(i64::MAX, |t| t.as_second())
 }
 
+/// Day `d`'s windows as `[start, end)` on the `edge` line, in the order a walk meets them:
+/// by start going forward, by end (latest first) going back. A gap can move a window past the
+/// next one, so the clock order isn't enough.
+fn spans(d: Date, windows: &[Window], zone: Option<&TimeZone>, forward: bool) -> Vec<(i64, i64)> {
+    let mut spans: Vec<_> = windows
+        .iter()
+        .map(|w| (edge(d, w.start, zone), edge(d, w.end, zone)))
+        .collect();
+    if forward {
+        spans.sort_unstable();
+    } else {
+        spans.sort_unstable_by_key(|s| std::cmp::Reverse(s.1));
+    }
+    spans
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Hours {
     pub start: Moment,
@@ -174,8 +190,8 @@ pub fn between(
     loop {
         if place.day(d) == Day::Business {
             let before = seconds;
-            for w in windows {
-                let (ws, we) = (edge(d, w.start, zone).max(t), edge(d, w.end, zone).min(b));
+            for (ws, we) in spans(d, windows, zone, true) {
+                let (ws, we) = (ws.max(t), we.min(b));
                 if we > ws {
                     seconds += we - ws;
                     t = we;
@@ -243,9 +259,7 @@ pub fn add(place: &Place, start: &Moment, amount: i64, windows: &[Window]) -> Re
     };
     while left > 0 {
         if place.day(d) == Day::Business {
-            for i in 0..windows.len() {
-                let w = windows[if forward { i } else { windows.len() - 1 - i }];
-                let (ws, we) = (edge(d, w.start, zone), edge(d, w.end, zone));
+            for (ws, we) in spans(d, windows, zone, forward) {
                 let (from, to) = if forward {
                     (ws.max(t), we)
                 } else {

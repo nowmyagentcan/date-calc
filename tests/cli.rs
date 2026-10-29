@@ -1328,7 +1328,6 @@ fn hours_add_up_across_clock_changes() {
 }
 
 #[test]
-#[ignore = "known bug: R3-01"]
 fn counts_windows_a_gap_moves_past_each_other() {
     // The gap moves 02:30-02:45 to 03:30-03:45, after 03:00-03:15: both count, in that order.
     for (tz, day, offset) in [
