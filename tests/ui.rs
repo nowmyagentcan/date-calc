@@ -476,7 +476,6 @@ fn reads_opaque_header_bytes_and_refuses_control_bytes() {
 }
 
 #[test]
-#[ignore = "known bug: F07"]
 fn refuses_control_bytes_at_the_edges_of_a_header_value() {
     let server = Server::start(&["--no-open"]);
     let post = b"POST /api HTTP/1.1".as_slice();

@@ -122,12 +122,15 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
                 && n.iter()
                     .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(b))
         };
-        // Field values are visible bytes, spaces and tabs (RFC 9110 §5.5).
+        // Field values are visible bytes, spaces and tabs (RFC 9110 §5.5), checked before the
+        // spaces and tabs around them are trimmed, so no other control hides at an edge.
         let content = |v: &[u8]| v.iter().all(|&b| b == b'\t' || b >= b' ' && b != 0x7f);
+        let line = line.strip_suffix(b"\n").unwrap_or(&line);
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
         let Some(colon) = line
             .iter()
             .position(|&b| b == b':')
-            .filter(|&i| token(&line[..i]) && content(line[i + 1..].trim_ascii()))
+            .filter(|&i| token(&line[..i]) && content(&line[i + 1..]))
         else {
             return Ok(error(400, "bad_request", "Can't read a request header."));
         };
