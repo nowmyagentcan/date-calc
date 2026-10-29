@@ -1158,3 +1158,229 @@ fn reaches_every_warning() {
         assert!(out.contains(&format!("\n! {text}\n")), "{args}: {out}");
     }
 }
+
+/// The Gregorian date a convert answer gives.
+fn gregorian(args: &[&str]) -> String {
+    answer(args)["gregorian"]["date"].as_str().unwrap().into()
+}
+
+/// A calendar date as `YYYY-MM[L]-DD`, the form `convert --from` reads.
+fn numbered(d: &Value) -> String {
+    let n = |k: &str| d[k].as_i64().unwrap();
+    let leap = if d["leap_month"] == true { "L" } else { "" };
+    format!("{:04}-{:02}{leap}-{:02}", n("year"), n("month"), n("day"))
+}
+
+#[test]
+fn converts_back_and_forth_between_every_calendar() {
+    for date in [
+        "2026-10-27",
+        "2025-07-25",
+        "2027-02-08",
+        "2027-03-10",
+        "2024-03-11",
+        "2000-01-01",
+        "1950-06-15",
+        "2043-12-31",
+    ] {
+        let v = answer(&["convert", date]);
+        let mut texts = vec![("gregorian", date.to_string())];
+        for d in v["dates"].as_array().unwrap() {
+            texts.push((d["calendar"].as_str().unwrap(), numbered(d)));
+        }
+        assert_eq!(texts.len(), 7, "{date}: {v}");
+        for (from, text) in &texts {
+            assert_eq!(
+                gregorian(&["convert", text, "--from", from]),
+                date,
+                "{text} {from}"
+            );
+            // Every from/to pair, on one date.
+            for (to, want) in texts.iter().skip(1).filter(|_| date == "2026-10-27") {
+                let v = answer(&["convert", text, "--from", from, "--to", to]);
+                assert_eq!(&numbered(&v["dates"][0]), want, "{text} {from} -> {to}");
+            }
+        }
+    }
+}
+
+#[test]
+fn names_adar_by_the_year() {
+    assert_eq!(gregorian(&["convert", "1", "Adar", "5786"]), "2026-02-18");
+    assert_eq!(
+        gregorian(&["convert", "1", "Adar", "I", "5787"]),
+        "2027-02-08"
+    );
+    assert_eq!(
+        gregorian(&["convert", "1", "Adar", "II", "5787"]),
+        "2027-03-10"
+    );
+}
+
+#[test]
+#[ignore = "known bug: F14"]
+fn refuses_adar_ii_in_a_common_year() {
+    let (code, v) = json(&["convert", "1", "Adar", "II", "5786"]);
+    assert_eq!(
+        (code, &v["error"]["code"]),
+        (1, &json!("bad_calendar_date"))
+    );
+}
+
+#[test]
+#[ignore = "known bug: F13"]
+fn reads_chinese_month_names() {
+    assert_eq!(
+        gregorian(&["convert", "1", "Month", "1", "2026"]),
+        "2026-02-17"
+    );
+    let leap = [
+        "convert", "1", "Leap", "month", "6", "2025", "--from", "chinese",
+    ];
+    assert_eq!(gregorian(&leap), "2025-07-25");
+}
+
+#[test]
+#[ignore = "known bug: F03"]
+fn reads_instants_with_fractional_seconds() {
+    let span = ["2026-11-02T09:00:00.000Z", "2026-11-02T10:00:00.000Z"];
+    let v = answer(&["hours", span[0], span[1], "--tz", "UTC"]);
+    assert_eq!(v["seconds"], 3600);
+    let v = answer(&["add", span[0], "1", "-u", "bh", "--tz", "UTC"]);
+    assert_eq!(v["result"], "2026-11-02T10:00:00+00:00");
+}
+
+/// Business hours added from `start` count back to the amount between start and result.
+fn hours_round_trip(start: &str, amount: &str, extra: &[&str]) {
+    let a = answer(&[&["add", start, amount, "-u", "bh"], extra].concat());
+    let (from, to) = (a["start"].as_str().unwrap(), a["result"].as_str().unwrap());
+    let (from, to) = if amount.starts_with('-') {
+        (to, from)
+    } else {
+        (from, to)
+    };
+    let h = answer(&[&["hours", from, to], extra].concat());
+    let want = (amount.trim_start_matches('-').parse::<f64>().unwrap() * 3600.0).round();
+    assert_eq!(
+        h["seconds"], want as i64,
+        "add {start} {amount} {extra:?} -> {to}"
+    );
+}
+
+#[test]
+fn added_business_hours_count_back_to_the_amount() {
+    let ny = ["--tz", "America/New_York", "--weekend", "none"];
+    let night = ["--hours", "22:00-06:00", "-c", "DE"];
+    let split = ["--hours", "09:00-12:00,13:00-17:00", "-c", "DE"];
+    for (start, amount, extra) in [
+        (
+            "2026-03-07T20:00",
+            "13",
+            &[&ny[..], &["--hours", "00:00-24:00"]].concat(),
+        ),
+        (
+            "2026-11-01T00:30",
+            "3",
+            &[&ny[..], &["--hours", "01:00-03:00"]].concat(),
+        ),
+        (
+            "2026-03-08T04:00",
+            "-2.5",
+            &[&ny[..], &["--hours", "01:00-03:30"]].concat(),
+        ),
+        ("2026-12-31T23:00", "9", &night[..].to_vec()),
+        ("2026-11-02 11:30", "7.25", &split[..].to_vec()),
+        ("2026-11-06 16:00", "-40", &split[..].to_vec()),
+        (
+            "2026-10-24T18:00",
+            "8",
+            &[
+                "--tz",
+                "Europe/Berlin",
+                "--hours",
+                "18:00-02:00,08:00-12:00",
+            ]
+            .to_vec(),
+        ),
+    ] {
+        hours_round_trip(start, amount, extra);
+    }
+}
+
+#[test]
+#[ignore = "known bug: F04"]
+fn added_business_hours_count_back_across_a_gap_between_windows() {
+    let extra = ["--hours", "01:00-02:30,03:00-04:00", "--weekend", "none"];
+    hours_round_trip(
+        "2026-03-08T01:00",
+        "2.5",
+        &[&extra[..], &["--tz", "America/New_York"]].concat(),
+    );
+}
+
+#[test]
+#[ignore = "known bug: F05"]
+fn overnight_hours_at_the_end_of_the_data_agree_with_add() {
+    let extra = ["-c", "LK", "--hours", "22:00-06:00"];
+    let (code, a) = json(&[&["add", "2026-12-31T23:00", "1", "-u", "bh"], &extra[..]].concat());
+    if code == 0 {
+        let to = a["result"].as_str().unwrap();
+        let h = answer(&[&["hours", "2026-12-31T23:00", to], &extra[..]].concat());
+        assert_eq!(h["seconds"], 3600);
+    }
+}
+
+#[test]
+#[ignore = "known bug: F10"]
+fn keeps_zoned_times_inside_year_one() {
+    let (code, out, _) = run(&[
+        "hours",
+        "0001-01-01T00:00Z",
+        "0001-01-01T01:00Z",
+        "--tz",
+        "America/New_York",
+        "--weekend",
+        "none",
+        "--hours",
+        "00:00-24:00",
+        "--json",
+    ]);
+    assert!(!out.contains("\"0000-"), "{code}: {out}");
+}
+
+#[test]
+#[ignore = "known bug: T02"]
+fn does_not_answer_a_backwards_holiday_range_with_nothing() {
+    let (code, v) = json(&[
+        "holidays",
+        "DE",
+        "--from",
+        "2026-12-31",
+        "--to",
+        "2026-01-01",
+    ]);
+    assert!(
+        code != 0 || !v["holidays"].as_array().unwrap().is_empty(),
+        "{v}"
+    );
+}
+
+#[test]
+#[ignore = "known bug: F09"]
+fn counts_only_the_arguments_against_the_length_limit() {
+    let name = format!("date-calc{}", std::env::consts::EXE_SUFFIX);
+    let base = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("long-path");
+    let pad = 257usize.saturating_sub(base.as_os_str().len() + name.len() + 2);
+    let dir = base.join("p".repeat(pad.max(1)));
+    std::fs::create_dir_all(&dir).unwrap();
+    let exe = dir.join(name);
+    std::fs::copy(env!("CARGO_BIN_EXE_date-calc"), &exe).unwrap();
+    assert!(exe.as_os_str().len() > 256);
+    let out = Command::new(&exe).arg("--version").output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
