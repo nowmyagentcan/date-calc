@@ -20,10 +20,11 @@ impl Error {
         self
     }
 
-    /// 3 when the machine failed us, 1 when the input is at fault.
+    /// 3 when the machine failed us, 2 for a misused command line, 1 when the input is at fault.
     pub fn exit_code(&self) -> u8 {
         match self.code {
             "port_in_use" | "io" => 3,
+            "usage" => 2,
             _ => 1,
         }
     }
@@ -43,10 +44,11 @@ mod tests {
     }
 
     #[test]
-    fn runtime_failures_exit_3() {
+    fn exit_codes_follow_the_failure() {
         for code in ["port_in_use", "io"] {
             assert_eq!(Error::new(code, "").exit_code(), 3);
         }
+        assert_eq!(Error::new("usage", "").exit_code(), 2);
         assert_eq!(Error::new("unknown_country", "").exit_code(), 1);
     }
 }

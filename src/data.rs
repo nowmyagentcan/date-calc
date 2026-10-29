@@ -113,7 +113,7 @@ fn find_block(country: &str) -> Option<&'static str> {
     })
 }
 
-fn weekend_days(mask: &str) -> u8 {
+pub(crate) fn weekend_days(mask: &str) -> u8 {
     mask.bytes().rev().fold(0, |m, b| m << 1 | (b - b'0'))
 }
 
