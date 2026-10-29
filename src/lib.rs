@@ -4,3 +4,4 @@ pub mod days;
 pub mod error;
 pub mod hours;
 pub mod input;
+pub mod report;

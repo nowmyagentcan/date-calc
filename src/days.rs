@@ -28,7 +28,7 @@ pub enum Day {
 }
 
 /// Something the answer depends on that the user may not expect; it doesn't fail the command.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Warning {
     pub code: &'static str,
     pub message: String,

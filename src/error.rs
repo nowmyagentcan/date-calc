@@ -1,5 +1,5 @@
 /// A failure the user can act on: a stable code for scripts, a sentence, and a fix when there is one.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Error {
     pub code: &'static str,
     pub message: String,
