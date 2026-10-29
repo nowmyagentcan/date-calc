@@ -367,7 +367,10 @@ fn main() -> ExitCode {
         Err(e) => Err(e),
     };
     let (out, code) = match answer {
-        Ok(answer) if json => (json_line(&answer), 0),
+        Ok(answer) if json => (
+            serde_json::to_string(&answer).expect("answers are plain data") + "\n",
+            0,
+        ),
         Ok(answer) => (people(text::answer(&answer), &io::stdout()), 0),
         Err(e) => {
             if debug {
@@ -387,12 +390,6 @@ fn main() -> ExitCode {
         }
     };
     emit(&out, code, debug)
-}
-
-fn json_line(answer: &report::Answer) -> String {
-    serde_json::to_string(answer).expect("answers are plain data")
-        + "
-"
 }
 
 /// The banner and a prompt on a terminal; with no terminal to ask on, a usage error.
