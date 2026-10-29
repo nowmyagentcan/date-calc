@@ -756,13 +756,16 @@ fn servers_end_quietly_when_stdout_closes() {
         &["mcp"],
         &["mcp", "--debug"],
     ] {
+        // The read end closes before the spawn: dropped after it, a test spawning beside
+        // this one could still hold a copy when the server writes.
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
         let mut child = date_calc(args)
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
+            .stdout(writer)
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        drop(child.stdout.take());
         let mut stdin = child.stdin.take().unwrap();
         let _ = writeln!(stdin, "{INITIALIZE}");
         let code = ended(&mut child);
