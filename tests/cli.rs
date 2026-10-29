@@ -1292,6 +1292,64 @@ fn added_business_hours_count_back_across_a_gap_between_windows() {
     hours_round_trip("2026-03-08T01:00", "2.5", extra);
 }
 
+/// `hours` over a whole day equals the sum of its hour-long pieces.
+fn hours_add_up(day: &str, extra: &str) {
+    let next = day
+        .parse::<jiff::civil::Date>()
+        .unwrap()
+        .tomorrow()
+        .unwrap();
+    let extra: Vec<_> = extra.split(' ').collect();
+    let seconds = |a: &str, b: &str| {
+        answer(&[&["hours", a, b], &extra[..]].concat())["seconds"]
+            .as_i64()
+            .unwrap()
+    };
+    let mut ends: Vec<_> = (0..24).map(|h| format!("{day}T{h:02}:00")).collect();
+    ends.push(format!("{next}T00:00"));
+    let pieces: i64 = ends.windows(2).map(|w| seconds(&w[0], &w[1])).sum();
+    assert_eq!(pieces, seconds(&ends[0], &ends[24]), "{day} {extra:?}");
+}
+
+#[test]
+fn hours_add_up_across_clock_changes() {
+    let ny = "--weekend none --tz America/New_York --hours";
+    for (day, extra) in [
+        ("2026-03-08", format!("{ny} 00:00-24:00")),
+        ("2026-03-08", format!("{ny} 01:00-02:30,03:00-04:00")),
+        ("2026-11-01", format!("{ny} 01:00-02:30,03:00-04:00")),
+        (
+            "2026-03-29",
+            "--weekend none --tz Europe/Berlin --hours 18:00-02:00,08:00-12:00".into(),
+        ),
+    ] {
+        hours_add_up(day, &extra);
+    }
+}
+
+#[test]
+#[ignore = "known bug: R3-01"]
+fn counts_windows_a_gap_moves_past_each_other() {
+    // The gap moves 02:30-02:45 to 03:30-03:45, after 03:00-03:15: both count, in that order.
+    for (tz, day, offset) in [
+        ("America/New_York", "2026-03-08", "-04:00"),
+        ("Europe/Berlin", "2026-03-29", "+02:00"),
+    ] {
+        let extra = format!("--weekend none --hours 02:30-02:45,03:00-03:15 --tz {tz}");
+        let args: Vec<_> = extra.split(' ').collect();
+        let hours = format!("hours {day}T00:00 {day}T04:00 {extra}");
+        let h = answer(&hours.split(' ').collect::<Vec<_>>());
+        assert_eq!(h["seconds"], 1800, "{tz}");
+        for (start, amount, result) in [("T00:00", "0.25", "T03:15"), ("T04:00", "-0.25", "T03:30")]
+        {
+            let start = format!("{day}{start}");
+            let a = answer(&[&["add", &start, amount, "-u", "bh"], &args[..]].concat());
+            assert_eq!(a["result"], format!("{day}{result}:00{offset}"), "{tz}");
+        }
+        hours_add_up(day, &extra);
+    }
+}
+
 #[test]
 fn overnight_hours_at_the_end_of_the_data_agree_with_add() {
     let extra = ["-c", "LK", "--hours", "22:00-06:00"];
