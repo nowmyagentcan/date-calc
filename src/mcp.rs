@@ -306,8 +306,11 @@ fn call<T: DeserializeOwned>(
     args: JsonObject,
     op: impl FnOnce(T, &mut Options) -> Op,
 ) -> CallToolResult {
-    let answer = serde_json::from_value(Value::Object(args))
-        .map_err(|e| Error::new("bad_request", format!("Can't read the arguments: {e}.")))
+    let answer = report::short(args.values().filter_map(Value::as_str))
+        .and_then(|()| {
+            serde_json::from_value(Value::Object(args))
+                .map_err(|e| Error::new("bad_request", format!("Can't read the arguments: {e}.")))
+        })
         .and_then(|args| {
             let mut o = Options::default();
             let op = op(args, &mut o);

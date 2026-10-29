@@ -295,6 +295,14 @@ fn clock_info(windows: &[hours::Window], zone: &Option<jiff::tz::TimeZone>) -> C
     }
 }
 
+/// Refuses an argument over 256 bytes, as the command line does before reading its own.
+pub fn short<'a>(mut args: impl Iterator<Item = &'a str>) -> Result<(), Error> {
+    if args.any(|a| a.len() > 256) {
+        return Err(Error::new("usage", "An argument is longer than 256 bytes."));
+    }
+    Ok(())
+}
+
 /// Runs one operation.
 pub fn run(op: &Op, o: &Options) -> Result<Answer, Error> {
     match op {

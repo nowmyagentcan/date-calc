@@ -303,6 +303,11 @@ fn answers_every_query_form_like_the_cli() {
             "unknown_timezone",
             None,
         ),
+        (
+            json!({"query": "2026-11-02 +1", "country": format!("{}DE", " ".repeat(257))}),
+            "usage",
+            None,
+        ),
     ] {
         let (status, reply) = server.post(&request);
         assert_eq!(

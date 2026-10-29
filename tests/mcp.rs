@@ -635,3 +635,13 @@ fn answers_each_of_many_outstanding_calls_under_its_own_id() {
         }
     }
 }
+
+#[test]
+fn refuses_an_argument_over_256_bytes() {
+    let country = format!("{}DE", " ".repeat(257));
+    let args = json!({"start": "2026-01-06", "end": "2026-01-06", "country": country});
+    let mut messages = handshake();
+    messages.push(call(1, "business_days_between", args));
+    let (responses, _) = session(&messages);
+    check_error(&responses[1], "usage", None);
+}

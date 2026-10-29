@@ -228,6 +228,8 @@ struct Request {
 fn answer(body: &[u8]) -> Result<Value, Error> {
     let r: Request = serde_json::from_slice(body)
         .map_err(|e| Error::new("bad_request", format!("Can't read the request: {e}.")))?;
+    let fields = [&r.country, &r.region, &r.weekend, &r.hours, &r.timezone];
+    report::short(fields.into_iter().flatten().map(String::as_str))?;
     let o = Options {
         country: r.country,
         region: r.region,
