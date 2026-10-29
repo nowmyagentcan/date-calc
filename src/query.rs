@@ -47,7 +47,9 @@ pub fn parse(line: &str) -> Result<Op, Error> {
     match &words[n..] {
         [] if !timed => return Ok(convert(None)),
         [cal] if !timed && Calendar::parse(cal).is_ok() => return Ok(convert(Some(cal))),
-        [amount, unit @ ..] if is_amount(amount) && (!unit.is_empty() || signed(amount)) => {
+        [amount, unit @ ..]
+            if is_amount(amount) && (!unit.is_empty() || amount.starts_with(['+', '-'])) =>
+        {
             return Ok(Op::Add {
                 start,
                 amount: amount.to_string(),
@@ -110,10 +112,6 @@ fn moment(words: &[&str]) -> Option<(String, bool, usize)> {
         .get(10..11)
         .is_some_and(|t| t.eq_ignore_ascii_case("t"));
     (joined && date_like(&first[..10])).then(|| (first.into(), true, 1))
-}
-
-fn signed(word: &str) -> bool {
-    word.starts_with(['+', '-'])
 }
 
 /// `10`, `+10`, `-5`, `1.5`.
