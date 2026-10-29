@@ -750,3 +750,238 @@ fn asks_for_a_command_without_a_terminal() {
     let (_, out, _) = run(&["--help"]);
     assert!(out.contains("\nUsage: date-calc [COMMAND]\n"));
 }
+
+/// Arguments, code, message, hint (spec §8.1).
+const ERRORS: &[(&str, &str, &str, Option<&str>)] = &[
+    (
+        "between x 2026-01-01",
+        "bad_date",
+        "Not a date: 'x'.",
+        Some("Use YYYY-MM-DD, e.g. 2026-02-01, or today."),
+    ),
+    (
+        "hours 2026-11-02T25:00 2026-11-03",
+        "bad_datetime",
+        "Not a date and time: '2026-11-02T25:00'.",
+        Some(
+            "Use YYYY-MM-DDTHH:MM, e.g. 2026-11-02T09:30, optionally with Z or an offset, or now.",
+        ),
+    ),
+    (
+        "between 10000-01-01 2026-01-01",
+        "date_out_of_range",
+        "10000-01-01 is outside 0001-01-01 to 9999-12-31.",
+        None,
+    ),
+    (
+        "between 2026-01-01 2026-01-02 -c XX",
+        "unknown_country",
+        "Unknown country: 'XX'.",
+        Some("Use an ISO code such as DE or DEU, or run: date-calc countries"),
+    ),
+    (
+        "countries Atlantis",
+        "unknown_country",
+        "Unknown country: 'Atlantis'.",
+        Some("Use an ISO code such as DE or DEU, or run: date-calc countries"),
+    ),
+    (
+        "between 2026-01-01 2026-01-02 -c DE -r ZZ",
+        "unknown_region",
+        "Germany has no region 'ZZ'.",
+        Some(
+            "Regions: BB, BE, BW, BY, HB, HE, HH, MV, NI, NW, RP, SH, … Run: date-calc countries DE",
+        ),
+    ),
+    (
+        "holidays GB-ZZ 2026",
+        "unknown_region",
+        "United Kingdom has no region 'ZZ'.",
+        Some("Regions: ENG, NIR, SCT, WLS. Run: date-calc countries GB"),
+    ),
+    (
+        "between 2026-01-01 2026-01-02 -c CN -r ZZ",
+        "unknown_region",
+        "China has no region 'ZZ'.",
+        Some("China has no regions in the holiday data."),
+    ),
+    (
+        "between 2027-01-04 2027-01-05 -c LK",
+        "no_holiday_data",
+        "Holiday data for Sri Lanka covers 2003-2026; 2027-01-04 is outside it.",
+        Some("Pick dates inside that range, or leave out --country to skip only weekends."),
+    ),
+    (
+        "holidays DE 2051",
+        "no_holiday_data",
+        "Holiday data for Germany covers 2000-2050; 2051-01-01 is outside it.",
+        Some("Pick dates inside that range, or leave out --country to skip only weekends."),
+    ),
+    (
+        "between 2026-01-01 2026-01-02 --weekend XYZ",
+        "bad_weekend",
+        "Not a weekend: 'XYZ'.",
+        Some("Use day names like SAT,SUN, a 7-digit mask from Monday like 0000011, or none."),
+    ),
+    (
+        "add 2026-01-01 1 --weekend 1111111",
+        "no_business_days",
+        "Every day is a weekend day, so there are no business days.",
+        Some("Change --weekend."),
+    ),
+    (
+        "hours 2026-01-01 2026-01-02 --hours 9-5",
+        "bad_hours",
+        "Not working hours: '9-5'.",
+        Some("Use HH:MM-HH:MM, several separated by commas, e.g. 09:00-12:00,13:00-17:00."),
+    ),
+    (
+        "hours 2026-01-01 2026-01-02 --hours 09:00-12:00,11:00-13:00",
+        "overlapping_hours",
+        "Working hours overlap: 09:00-12:00 and 11:00-13:00.",
+        Some("Give windows that don't overlap, in any order."),
+    ),
+    (
+        "hours 2026-01-01 2026-01-02 --tz Mars/Base",
+        "unknown_timezone",
+        "Unknown time zone: 'Mars/Base'.",
+        Some("Use an IANA name such as Europe/Berlin or America/New_York."),
+    ),
+    (
+        "hours 2026-10-30T16:00:00Z 2026-11-02T18:00:00Z",
+        "tz_required",
+        "2026-10-30T16:00:00Z has a UTC offset, so the business's time zone is needed.",
+        Some("Add --tz, e.g. --tz Europe/Berlin, or give local times without an offset."),
+    ),
+    (
+        "add 2026-01-01 abc",
+        "bad_amount",
+        "Not a valid amount: 'abc'.",
+        Some("Use a whole number like 10 or -5 (business hours may have 2 decimals, like 1.5)."),
+    ),
+    (
+        "add 9999-12-31 1 -u days",
+        "result_out_of_range",
+        "The result would be outside 0001-9999.",
+        Some("Use a smaller amount."),
+    ),
+    (
+        "add 2050-12-30 5 -c DE",
+        "result_out_of_range",
+        "The result would be outside 2000-2050.",
+        Some("Use a smaller amount."),
+    ),
+    (
+        "convert 2026-10-27 --from julian",
+        "unknown_calendar",
+        "Unknown calendar: 'julian'.",
+        Some(
+            "Use gregorian, islamic-umalqura, islamic-civil, hebrew, chinese, persian or bikram-sambat.",
+        ),
+    ),
+    (
+        "convert 30 Safar 1447",
+        "bad_calendar_date",
+        "There is no 30 Safar 1447 in the Umm al-Qura calendar.",
+        Some("Safar 1447 has 29 days."),
+    ),
+    (
+        "convert 1882-11-11 --to islamic-umalqura",
+        "calendar_out_of_range",
+        "The Umm al-Qura table covers 1300-1600 AH (1882-11-12 to 2174-11-25).",
+        None,
+    ),
+    (
+        "convert 2101-01-01 --from bs",
+        "calendar_out_of_range",
+        "The Bikram Sambat table covers 1975-2100 BS (1918-04-13 to 2044-04-12).",
+        None,
+    ),
+];
+
+#[test]
+fn reports_every_error_with_its_message_and_hint() {
+    for &(args, code, message, hint) in ERRORS {
+        let words: Vec<_> = args.split(' ').collect();
+        let (status, v) = json(&words);
+        let want = json!({"error": {"code": code, "message": message, "hint": hint}});
+        assert_eq!((status, v), (1, want), "{args}");
+        let (status, out, err) = run(&words);
+        let hint = hint.map(|h| format!("  {h}\n")).unwrap_or_default();
+        assert_eq!(
+            (status, out, err),
+            (1, String::new(), format!("✗ {message}\n{hint}")),
+            "{args}"
+        );
+    }
+}
+
+/// Arguments, the warning code, and the start of its message (spec §8.2).
+const WARNINGS: &[(&str, &str, &str)] = &[
+    (
+        "between 2026-11-02 2026-11-06",
+        "no_country",
+        "No country given, so only weekends (Sat, Sun) are skipped.",
+    ),
+    (
+        "hours 2026-11-02 2026-11-03 --weekend none",
+        "no_country",
+        "No country given, so only weekends (none) are skipped.",
+    ),
+    (
+        "between 2026-01-01 2026-01-31 -c DE",
+        "regions_differ",
+        "Germany has regional holidays in this range (Epiphany 2026-01-06 (Augsburg, BW, BY, ST)); this uses national holidays only. Add --region, e.g. BB.",
+    ),
+    (
+        "between 2027-02-01 2027-02-28 -c CN",
+        "schedule_not_announced",
+        "China announces one-off holidays or workday swaps most years; the bundled data has them through 2026. Later dates follow the regular rules and may change.",
+    ),
+    (
+        "holidays AE 2026",
+        "estimated_dates",
+        "Some holiday dates are estimates (lunar calendar): ",
+    ),
+    (
+        "add 2026-02-15 0 -c CN",
+        "start_not_business_day",
+        "2026-02-15 is not a business day in China.",
+    ),
+    (
+        "convert 1882-11-11",
+        "calendar_out_of_range",
+        "The Umm al-Qura table covers 1300-1600 AH (1882-11-12 to 2174-11-25); left out.",
+    ),
+    (
+        "convert 2084-01-01 --from bs",
+        "bs_projected",
+        "Bikram Sambat dates after 2083 BS come from a projected table; Nepal publishes each year's official calendar about a year ahead.",
+    ),
+    (
+        "convert 2110-06-01 --to chinese",
+        "chinese_calculated",
+        "Chinese dates outside 1900-2102 are calculated, not from the published tables, and may be a day off.",
+    ),
+    (
+        "between 2026-02-01 2026-02-28 -c CN --weekend SAT,SUN",
+        "weekend_override",
+        "Weekend days worked by decree still count as business days: 2026-02-14, 2026-02-28.",
+    ),
+];
+
+#[test]
+fn reaches_every_warning() {
+    for &(args, code, message) in WARNINGS {
+        let words: Vec<_> = args.split(' ').collect();
+        let v = answer(&words);
+        let warnings = v["warnings"].as_array().unwrap();
+        let found = warnings.iter().find(|w| w["code"] == code);
+        let text = found
+            .and_then(|w| w["message"].as_str())
+            .unwrap_or_default();
+        assert!(text.starts_with(message), "{args}: {v}");
+        let (_, out, _) = run(&words);
+        assert!(out.contains(&format!("\n! {text}\n")), "{args}: {out}");
+    }
+}
