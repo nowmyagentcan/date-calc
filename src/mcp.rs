@@ -276,8 +276,11 @@ impl Server {
 )]
 impl ServerHandler for Server {}
 
+/// A tool's arguments, closed to names it doesn't define.
 fn input<T: JsonSchema>() -> Arc<JsonObject> {
-    schema::<T>(SchemaSettings::draft2020_12())
+    let mut schema = schema::<T>(SchemaSettings::draft2020_12());
+    Arc::make_mut(&mut schema).insert("additionalProperties".into(), false.into());
+    schema
 }
 
 /// The schema of an answer as serialized, so fields left out when empty aren't required.
@@ -304,11 +307,12 @@ fn schema<T: JsonSchema>(settings: SchemaSettings) -> Arc<JsonObject> {
 
 /// The answer as structured content, or the error object as an error result. Errors carry
 /// no structured content, so clients don't check them against the output schema.
-fn call<T: DeserializeOwned>(
+fn call<T: DeserializeOwned + JsonSchema>(
     args: JsonObject,
     op: impl FnOnce(T, &mut Options) -> Op,
 ) -> CallToolResult {
     let answer = report::short(args.values().filter_map(Value::as_str))
+        .and_then(|()| known::<T>(&args))
         .and_then(|()| {
             serde_json::from_value(Value::Object(args))
                 .map_err(|e| Error::new("bad_request", format!("Can't read the arguments: {e}.")))
@@ -324,6 +328,22 @@ fn call<T: DeserializeOwned>(
         }
         Err(e) => CallToolResult::error(vec![ContentBlock::text(report::failure(&e))]),
     }
+}
+
+/// Refuses an argument the tool doesn't define, so a misspelt option can't change the answer.
+fn known<T: JsonSchema>(args: &JsonObject) -> Result<(), Error> {
+    let schema = input::<T>();
+    let names = schema["properties"]
+        .as_object()
+        .expect("tools have properties");
+    let Some(unknown) = args.keys().find(|k| !names.contains_key(*k)) else {
+        return Ok(());
+    };
+    let names: Vec<_> = names.keys().map(String::as_str).collect();
+    Err(
+        Error::new("bad_request", format!("Unknown argument '{unknown}'."))
+            .hint(format!("Arguments: {}.", names.join(", "))),
+    )
 }
 
 /// Serves until the client closes stdin.

@@ -120,6 +120,7 @@ fn check_tools(list: &Value) {
             json!({"readOnlyHint": true, "idempotentHint": true, "openWorldHint": false})
         );
         let input = &t["inputSchema"];
+        assert_eq!(input["additionalProperties"], false, "{name}");
         assert_eq!(
             input["required"].as_array().map_or(0, Vec::len),
             required.len(),
@@ -649,4 +650,24 @@ fn refuses_an_argument_over_256_bytes() {
     messages.push(call(1, "business_days_between", args));
     let (responses, _) = session(&messages);
     check_error(&responses[1], "usage", None);
+}
+
+#[test]
+fn refuses_an_argument_the_tool_does_not_define() {
+    let args = json!({"start": "2026-11-02", "end": "2026-11-06", "exclude_start": true});
+    let mut messages = handshake();
+    messages.push(call(1, "business_days_between", args));
+    let (responses, _) = session(&messages);
+    check_error(&responses[1], "bad_request", None);
+    let text = responses[1]["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(text).unwrap()["error"],
+        json!({
+            "code": "bad_request",
+            "message": "Unknown argument 'exclude_start'.",
+            "hint": "Arguments: start, end, country, region, weekend, include_start, include_end."
+        })
+    );
 }
