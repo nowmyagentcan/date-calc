@@ -1349,7 +1349,6 @@ fn historical_offsets_keep_dates_and_weekdays_in_step() {
 }
 
 #[test]
-#[ignore = "known bug: R2-02"]
 fn warns_of_estimated_dates_among_regional_holidays() {
     let args = "holidays IN --from 2026-01-17 --to 2026-01-17";
     let v = answer(&args.split(' ').collect::<Vec<_>>());

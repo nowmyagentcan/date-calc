@@ -416,16 +416,19 @@ pub fn holidays(place: &Place, from: Date, to: Date) -> Result<Listing, Error> {
             except_regions: codes(b, &h.except),
         })
         .collect();
-    let entries: Vec<_> = holidays.iter().map(|h| h.entry.clone()).collect();
-    let warnings = [schedule(place, to), estimated(&entries)];
+    let regional = match place.region {
+        None => regional(b, from, to),
+        Some(_) => vec![],
+    };
+    let mut entries: Vec<_> = holidays.iter().map(|h| &h.entry).collect();
+    entries.extend(regional.iter().map(|g| &g.entry));
+    entries.sort_by_key(|e| e.date);
+    let warnings = [schedule(place, to), estimated(entries)];
     Ok(Listing {
         from,
         to,
         holidays,
-        regional: match place.region {
-            None => regional(b, from, to),
-            Some(_) => vec![],
-        },
+        regional,
         weekend_workdays: place.workdays(from, to),
         weekend: place.weekend_on(from),
         warnings: warnings.into_iter().flatten().collect(),
@@ -523,8 +526,8 @@ fn schedule(place: &Place, to: Date) -> Option<Warning> {
     warning("schedule_not_announced", message)
 }
 
-fn estimated(holidays: &[Entry]) -> Option<Warning> {
-    let mut estimates = holidays.iter().filter(|h| h.estimated).peekable();
+fn estimated<'a>(holidays: impl IntoIterator<Item = &'a Entry>) -> Option<Warning> {
+    let mut estimates = holidays.into_iter().filter(|h| h.estimated).peekable();
     estimates.peek()?;
     let message = format!(
         "Some holiday dates are estimates (lunar calendar): {}. The official date can differ by a day.",
